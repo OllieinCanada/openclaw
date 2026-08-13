@@ -1158,7 +1158,9 @@ export function validateTrustedProducerIdentity(evidence, client, verifier, trus
   }
   if (shaPinned) {
     if (manifest.version !== 3) {
-      throw new Error("SHA-pinned release evidence requires a v3 manifest");
+      throw new Error(
+        "SHA-pinned release evidence requires a Full Release Validation manifest with schema openclaw.release-validation-evidence/v3",
+      );
     }
     if (!manifest.workflowRef.startsWith(`release-ci/${manifest.workflowSha.slice(0, 12)}-`)) {
       throw new Error("SHA-pinned release evidence branch does not match its workflow SHA");
