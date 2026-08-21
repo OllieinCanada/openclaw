@@ -911,7 +911,6 @@ function runReleasePublishInputValidation(overrides: Record<string, string>) {
       PREFLIGHT_RUN_ID: "111",
       PUBLISH_DOCKER_ONLY: "false",
       PUBLISH_OPENCLAW_NPM: "true",
-      RELEASE_PLAN_DIGEST: `sha256:${"a".repeat(64)}`,
       RELEASE_NPM_DIST_TAG: "beta",
       RELEASE_PROFILE: "beta",
       RELEASE_TAG: "v2026.7.1-beta.3",
@@ -5499,7 +5498,6 @@ describe("package artifact reuse", () => {
       "Checkout target package manifest",
     );
     const toolingIdentity = workflowStep(resolveTargetJob, "Resolve trusted workflow identity");
-    const releasePlanValidation = workflowStep(resolveTargetJob, "Validate immutable release plan");
     const releaseInputValidation = workflowStep(resolveTargetJob, "Validate release inputs");
     const evidenceReuseStep = workflowStep(evidenceReuseJob, "Find reusable validation evidence");
     const releaseChecksDispatchStep = workflowStep(
@@ -5520,13 +5518,9 @@ describe("package artifact reuse", () => {
         required: false,
         type: "string",
       },
-      release_contract_json: {
-        required: true,
-        type: "string",
-      },
     });
     expect(readWorkflow(FULL_RELEASE_VALIDATION_WORKFLOW).env).toMatchObject({
-      RELEASE_ISOLATION_TOOLING_CONTRACT: "3",
+      RELEASE_ISOLATION_TOOLING_CONTRACT: "2",
     });
     expect(workflow).toContain("CHILD_WORKFLOW_REF: ${{ github.ref_name }}");
     expect(workflow).toContain('gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1');
@@ -5543,12 +5537,6 @@ describe("package artifact reuse", () => {
     expect(resolveTargetJob.outputs?.trusted_workflow_json).toBe(
       "${{ steps.tooling_identity.outputs.json }}",
     );
-    expect(resolveTargetJob.outputs).toMatchObject({
-      release_plan_json: "${{ steps.release_plan.outputs.json }}",
-      release_plan_digest: "${{ steps.release_plan.outputs.digest }}",
-      validation_attempt_request_json: "${{ steps.release_plan.outputs.attempt_json }}",
-      validation_attempt_request_digest: "${{ steps.release_plan.outputs.attempt_digest }}",
-    });
     expect(toolingIdentity.env).toMatchObject({
       GH_TOKEN: "${{ github.token }}",
       REQUESTED_IDENTITY_JSON: "${{ inputs.trusted_workflow_json }}",
@@ -5562,27 +5550,6 @@ describe("package artifact reuse", () => {
       '--workflow-contract "$WORKFLOW_CONTRACT"',
       '--requested-identity-json "$REQUESTED_IDENTITY_JSON"',
       'echo "json=${identity}"',
-    ]);
-    expect(releasePlanValidation.env).toMatchObject({
-      CANDIDATE_SHA: "${{ steps.resolve.outputs.sha }}",
-      CROSS_OS_SUITE_FILTER: "${{ inputs.cross_os_suite_filter }}",
-      FAIL_FAST: "${{ inputs.fail_fast }}",
-      LIVE_SUITE_FILTER: "${{ inputs.live_suite_filter }}",
-      NPM_TELEGRAM_SCENARIO: "${{ inputs.npm_telegram_scenario }}",
-      RELEASE_CONTRACT_JSON: "${{ inputs.release_contract_json }}",
-      RELEASE_PROFILE: "${{ inputs.release_profile }}",
-      RERUN_GROUP: "${{ inputs.rerun_group }}",
-      REUSE_EVIDENCE: "${{ inputs.reuse_evidence }}",
-      TRUSTED_WORKFLOW_JSON: "${{ steps.tooling_identity.outputs.json }}",
-    });
-    expectTextToIncludeAll(releasePlanValidation.run, [
-      "validateReleasePlanLock",
-      "validateValidationAttemptRequest",
-      "release contract keys must be releasePlanLock and validationAttemptRequest",
-      "release plan candidate identity or validation profile does not match the resolved target",
-      "release plan tooling does not match the trusted workflow identity",
-      "validation attempt request does not bind the release plan digest",
-      "validation attempt request does not match the dispatched workflow controls",
     ]);
     expectTextToIncludeAll(releaseInputValidation.run, [
       'target_version="$(jq -er',
@@ -7730,7 +7697,7 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     }
   });
 
-  it("pins every documented Full Release Validation caller to one exact SHA", () => {
+  it("pins every documented raw Full Release Validation caller to one exact SHA", () => {
     const nightly = readFileSync(".agents/skills/release-openclaw-nightly/SKILL.md", "utf8");
     const liveUpdater = readFileSync(".agents/skills/openclaw-live-updater/SKILL.md", "utf8");
     const releaseCi = readFileSync(".agents/skills/release-openclaw-ci/SKILL.md", "utf8");
@@ -7748,11 +7715,8 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     expect(nightly).toContain('-f expected_sha="$SHA"');
     expectTextToIncludeAll(liveUpdater, [
       'MAIN_SHA="<exact-main-sha>"',
-      'TOOLING_SHA="<exact-main-tooling-sha>"',
-      "pnpm ci:full-release",
-      '--sha "$MAIN_SHA"',
-      '--workflow-sha "$TOOLING_SHA"',
-      "--release-plan-lock release-plan-lock.json",
+      '-f ref="$MAIN_SHA"',
+      '-f expected_sha="$MAIN_SHA"',
     ]);
     for (const text of [releaseCi, fullReleaseDocs, releasingDocs]) {
       expectTextToIncludeAll(text, [
@@ -7763,12 +7727,12 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     }
     expectTextToIncludeAll(ciDocs, [
       'VALIDATION_SHA="<full-commit-sha>"',
-      '--sha "$VALIDATION_SHA"',
-      '--workflow-sha "$TOOLING_SHA"',
-      "--release-plan-lock release-plan-lock.json",
+      '-f ref="$VALIDATION_SHA"',
+      '-f expected_sha="$VALIDATION_SHA"',
       'TOOLING_SHA="<recorded-full-main-ancestor-sha>"',
       'VALIDATION_SHA="<full-release-candidate-sha>"',
       "--target-ref release/YYYY.M.PATCH",
+      '--workflow-sha "$TOOLING_SHA"',
     ]);
     for (const text of [releaseCi, releaseCiNotes, testing, parallels, ciDocs, maintainer]) {
       expect(text).toContain("Validation SHA + Tooling SHA");

@@ -76,11 +76,6 @@ and run Full Release Validation against that SHA:
 
 ```bash
 RELEASE_SHA="$(git rev-parse HEAD)"
-RELEASE_CONTRACT_JSON="$(
-  node scripts/release-plan-lock.mjs envelope \
-    --lock release-plan-lock.json \
-    --rerun-group all
-)"
 
 gh workflow run openclaw-npm-release.yml \
   --ref extended-stable/YYYY.M.33 \
@@ -92,7 +87,6 @@ gh workflow run full-release-validation.yml \
   --ref extended-stable/YYYY.M.33 \
   -f ref=extended-stable/YYYY.M.33 \
   -f expected_sha="$RELEASE_SHA" \
-  -f release_contract_json="$RELEASE_CONTRACT_JSON" \
   -f release_profile=stable
 ```
 

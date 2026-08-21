@@ -38,7 +38,6 @@ import {
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-const RELEASE_PLAN_DIGEST = `sha256:${"a".repeat(64)}`;
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), init);
@@ -98,17 +97,9 @@ describe("release candidate checklist", () => {
   });
 
   it("treats the release tag as a planned post-validation identity", () => {
-    const options = parseArgs([
-      "--tag",
-      "v2026.7.1-beta.4",
-      "--target-sha",
-      "a".repeat(40),
-      "--release-plan-lock",
-      "release-plan-lock.json",
-    ]);
+    const options = parseArgs(["--tag", "v2026.7.1-beta.4", "--target-sha", "a".repeat(40)]);
 
     expect(options.targetSha).toBe("a".repeat(40));
-    expect(options.releasePlanLockPath).toBe("release-plan-lock.json");
     expect(() => assertPlannedReleaseTagIsAbsent("v2026.7.1-beta.4", () => true)).toThrow(
       "already exists",
     );
@@ -991,7 +982,6 @@ describe("release candidate checklist", () => {
       "--npm-dist-tag",
       "alpha",
     ]);
-    options.releasePlanDigest = RELEASE_PLAN_DIGEST;
 
     expect(options.workflowRef).toBe(workflowRef);
     expect(buildPublishCommand(options)).toContain(`'--ref' '${workflowRef}'`);
@@ -1032,7 +1022,6 @@ describe("release candidate checklist", () => {
       duplicateOption("--plugin-publish-scope", "all-publishable", "selected"),
       duplicateOption("--plugins", "telegram", "discord"),
       duplicateOption("--output-dir", ".artifacts/a", ".artifacts/b"),
-      duplicateOption("--release-plan-lock", "a.json", "b.json"),
     ] satisfies Array<[string, string[]]>;
 
     for (const [flag, args] of duplicateCases) {
@@ -1167,7 +1156,6 @@ describe("release candidate checklist", () => {
       ]),
       workflowRef: "main",
       fullReleaseRunAttempt: 2,
-      releasePlanDigest: RELEASE_PLAN_DIGEST,
     };
 
     const command = buildPublishCommand(options);
@@ -1177,12 +1165,8 @@ describe("release candidate checklist", () => {
     expect(command).toContain("'plugin_sdk_api_acknowledgement=a1b2c3d4'");
     expect(command).toContain("'tag=v2026.5.14-beta.3'");
     expect(command).toContain("'plugin_publish_scope=all-publishable'");
-    expect(command).toContain(`'release_plan_digest=${RELEASE_PLAN_DIGEST}'`);
     expect(command).toContain("'--ref' 'main'");
     expect(command).not.toContain("windows_node_tag=");
-    expect(() => buildPublishCommand({ ...options, releasePlanDigest: "" })).toThrow(
-      "release publish requires an exact release plan digest",
-    );
 
     const workflow = parse(
       readFileSync(".github/workflows/openclaw-release-publish.yml", "utf8"),
@@ -1221,7 +1205,6 @@ describe("release candidate checklist", () => {
         "main",
       ]),
       workflowRef: "main",
-      releasePlanDigest: RELEASE_PLAN_DIGEST,
       windowsNodeInstallerDigests: JSON.stringify({
         "OpenClawCompanion-Setup-x64.exe": `sha256:${"a".repeat(64)}`,
         "OpenClawCompanion-Setup-arm64.exe": `sha256:${"b".repeat(64)}`,
@@ -1349,7 +1332,6 @@ describe("release candidate checklist", () => {
       ]),
       workflowRef: "main",
       npmTelegramRunId: "333",
-      releasePlanDigest: RELEASE_PLAN_DIGEST,
     };
 
     expect(buildPublishCommand(options)).toContain("'npm_telegram_run_id=333'");
@@ -1393,17 +1375,13 @@ describe("release candidate checklist", () => {
 
   it("keeps contract 1 callers compatible and sends identity for contracts 2 and 3", () => {
     const workflowSha = "a".repeat(40);
-    const source = (
-      contract: string,
-      declareIdentity: boolean,
-      declareReleaseContract = contract === "3",
-    ) => `env:
+    const source = (contract: string, declareIdentity: boolean) => `env:
   RELEASE_ISOLATION_TOOLING_CONTRACT: "${contract}"
 on:
   workflow_dispatch:
     inputs:
       expected_sha: {}
-${declareIdentity ? "      trusted_workflow_json: {}\n" : ""}${declareReleaseContract ? "      release_contract_json: {}\n" : ""}`;
+${declareIdentity ? "      trusted_workflow_json: {}\n" : ""}`;
 
     expect(
       fullReleaseTrustedWorkflowFields({
@@ -1431,13 +1409,6 @@ ${declareIdentity ? "      trusted_workflow_json: {}\n" : ""}${declareReleaseCon
         workflowSource: source("2", false),
       }),
     ).toThrow("contract 2 requires trusted_workflow_json");
-    expect(() =>
-      fullReleaseTrustedWorkflowFields({
-        workflowRef: "main",
-        workflowSha,
-        workflowSource: source("3", true, false),
-      }),
-    ).toThrow("contract 3 requires release_contract_json");
     expect(() =>
       fullReleaseTrustedWorkflowFields({
         workflowRef: "main",

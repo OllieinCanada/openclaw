@@ -105,35 +105,6 @@ describe("release tooling identity", () => {
     ).toThrow("must match the executing workflow ref and SHA");
   });
 
-  it("accepts contract 3 only with explicit identity and rejects unknown contracts", () => {
-    expect(
-      resolveReleaseToolingIdentity({
-        requestedIdentityJson: JSON.stringify({
-          ref: "main",
-          fullRef: "refs/heads/main",
-          sha: SHA,
-        }),
-        workflowContract: "3",
-        workflowFullRef: "refs/heads/main",
-        workflowRef: "main",
-        workflowSha: SHA,
-      }),
-    ).toEqual({ ref: "main", fullRef: "refs/heads/main", sha: SHA });
-    expect(() =>
-      resolveReleaseToolingIdentity({
-        requestedIdentityJson: JSON.stringify({
-          ref: "main",
-          fullRef: "refs/heads/main",
-          sha: SHA,
-        }),
-        workflowContract: "4",
-        workflowFullRef: "refs/heads/main",
-        workflowRef: "main",
-        workflowSha: SHA,
-      }),
-    ).toThrow("contract 4 is unsupported");
-  });
-
   it("accepts only the live exact lightweight protected tag", () => {
     const runGh = vi.fn(() =>
       JSON.stringify({

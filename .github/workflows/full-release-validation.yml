@@ -18,10 +18,6 @@ on:
         required: false
         default: ""
         type: string
-      release_contract_json:
-        description: Canonical release plan lock and validation attempt request JSON
-        required: true
-        type: string
       target_context_ref:
         description: Optional canonical release branch or tag context for an exact-SHA target
         required: false
@@ -171,7 +167,7 @@ env:
   # Read retries and one-shot dispatch recovery share this classifier; dispatch POSTs never retry.
   GH_TRANSIENT_SERVER_OR_NETWORK_PATTERN: "HTTP 5[0-9][0-9]|Server Error|invalid character .* looking for beginning of value|error connecting to|context deadline exceeded|connection reset by peer|connection refused|TLS handshake timeout|i/o timeout|network is unreachable|(^|[^A-Za-z0-9_])EOF([^A-Za-z0-9_]|$)|ETIMEDOUT|ECONNRESET|EAI_AGAIN"
   NODE_VERSION: "24.16.0"
-  RELEASE_ISOLATION_TOOLING_CONTRACT: "3"
+  RELEASE_ISOLATION_TOOLING_CONTRACT: "2"
 
 jobs:
   resolve_target:
@@ -181,10 +177,6 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       trusted_workflow_json: ${{ steps.tooling_identity.outputs.json }}
-      release_plan_json: ${{ steps.release_plan.outputs.json }}
-      release_plan_digest: ${{ steps.release_plan.outputs.digest }}
-      validation_attempt_request_json: ${{ steps.release_plan.outputs.attempt_json }}
-      validation_attempt_request_digest: ${{ steps.release_plan.outputs.attempt_digest }}
     steps:
       - name: Checkout trusted workflow helper
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -239,100 +231,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: false
-
-      - name: Validate immutable release plan
-        id: release_plan
-        env:
-          CANDIDATE_SHA: ${{ steps.resolve.outputs.sha }}
-          CROSS_OS_SUITE_FILTER: ${{ inputs.cross_os_suite_filter }}
-          FAIL_FAST: ${{ inputs.fail_fast }}
-          LIVE_SUITE_FILTER: ${{ inputs.live_suite_filter }}
-          NPM_TELEGRAM_SCENARIO: ${{ inputs.npm_telegram_scenario }}
-          RELEASE_CONTRACT_JSON: ${{ inputs.release_contract_json }}
-          RELEASE_PROFILE: ${{ inputs.release_profile }}
-          RERUN_GROUP: ${{ inputs.rerun_group }}
-          REUSE_EVIDENCE: ${{ inputs.reuse_evidence }}
-          TRUSTED_WORKFLOW_JSON: ${{ steps.tooling_identity.outputs.json }}
-        run: |
-          set -euo pipefail
-          export TARGET_VERSION="$(jq -er '.version | select(type == "string")' target/package.json)"
-          node --input-type=module <<'NODE'
-          import { appendFileSync } from "node:fs";
-          import {
-            canonicalJson,
-            sha256Digest,
-            validateReleasePlanLock,
-            validateValidationAttemptRequest,
-          } from "./workflow/scripts/release-plan-contract.mjs";
-
-          const contract = JSON.parse(process.env.RELEASE_CONTRACT_JSON);
-          if (
-            !contract ||
-            typeof contract !== "object" ||
-            Array.isArray(contract) ||
-            Object.keys(contract).sort().join(",") !==
-              "releasePlanLock,validationAttemptRequest"
-          ) {
-            throw new Error(
-              "release contract keys must be releasePlanLock and validationAttemptRequest",
-            );
-          }
-          const lock = validateReleasePlanLock(contract.releasePlanLock);
-          const plan = lock.plan;
-          const digest = lock.digest;
-          if (
-            plan.candidateSha !== process.env.CANDIDATE_SHA ||
-            plan.version !== process.env.TARGET_VERSION ||
-            plan.validation.profile !== process.env.RELEASE_PROFILE
-          ) {
-            throw new Error(
-              "release plan candidate identity or validation profile does not match the resolved target",
-            );
-          }
-          const tooling = JSON.parse(process.env.TRUSTED_WORKFLOW_JSON);
-          if (
-            plan.tooling.repository !== process.env.GITHUB_REPOSITORY ||
-            plan.tooling.workflowPath !== ".github/workflows/full-release-validation.yml" ||
-            plan.tooling.ref !== tooling.ref ||
-            plan.tooling.fullRef !== tooling.fullRef ||
-            plan.tooling.sha !== tooling.sha
-          ) {
-            throw new Error("release plan tooling does not match the trusted workflow identity");
-          }
-          const attempt = validateValidationAttemptRequest(
-            contract.validationAttemptRequest,
-          );
-          if (attempt.planDigest !== digest) {
-            throw new Error("validation attempt request does not bind the release plan digest");
-          }
-          const expectedAttempt = validateValidationAttemptRequest({
-            schema: "openclaw.validation-attempt-request.v1",
-            planDigest: digest,
-            rerunGroup: process.env.RERUN_GROUP,
-            filters: {
-              crossOsSuite: process.env.CROSS_OS_SUITE_FILTER,
-              liveSuite: process.env.LIVE_SUITE_FILTER,
-              npmTelegramScenario: process.env.NPM_TELEGRAM_SCENARIO,
-            },
-            failFast: process.env.FAIL_FAST === "true",
-            reuseEvidence: process.env.REUSE_EVIDENCE === "true",
-          });
-          if (canonicalJson(attempt) !== canonicalJson(expectedAttempt)) {
-            throw new Error(
-              "validation attempt request does not match the dispatched workflow controls",
-            );
-          }
-          appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            [
-              `json=${canonicalJson(plan)}`,
-              `digest=${digest}`,
-              `attempt_json=${canonicalJson(attempt)}`,
-              `attempt_digest=${sha256Digest(attempt)}`,
-              "",
-            ].join("\n"),
-          );
-          NODE
 
       - name: Validate release inputs
         env:
@@ -1901,10 +1799,6 @@ jobs:
           SKIP_PACKAGE_TELEGRAM_E2E: ${{ inputs.skip_package_telegram_e2e }}
           ALLOW_UNRELEASED_CHANGELOG: ${{ inputs.allow_unreleased_changelog || (inputs.target_context_ref == '' && (inputs.ref == 'main' || inputs.ref == 'refs/heads/main')) }}
           PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON: ${{ inputs.plugin_prerelease_node_exclude_patterns_json }}
-          RELEASE_PLAN_JSON: ${{ needs.resolve_target.outputs.release_plan_json }}
-          RELEASE_PLAN_DIGEST: ${{ needs.resolve_target.outputs.release_plan_digest }}
-          VALIDATION_ATTEMPT_REQUEST_JSON: ${{ needs.resolve_target.outputs.validation_attempt_request_json }}
-          VALIDATION_ATTEMPT_REQUEST_DIGEST: ${{ needs.resolve_target.outputs.validation_attempt_request_digest }}
         run: |
           set -euo pipefail
           manifest_dir="${RUNNER_TEMP}/full-release-validation"
@@ -1926,12 +1820,8 @@ jobs:
               --arg evidenceSha "$EVIDENCE_SHA" \
               --arg evidencePolicy "$EVIDENCE_POLICY" \
               --argjson evidenceChangedPaths "$EVIDENCE_CHANGED_PATHS" \
-              --argjson releasePlan "$RELEASE_PLAN_JSON" \
-              --arg releasePlanDigest "$RELEASE_PLAN_DIGEST" \
-              --argjson validationAttemptRequest "$VALIDATION_ATTEMPT_REQUEST_JSON" \
-              --arg validationAttemptRequestDigest "$VALIDATION_ATTEMPT_REQUEST_DIGEST" \
               '. + {
-                version: 4,
+                version: 3,
                 runId: $runId,
                 runAttempt: $runAttempt,
                 workflowRef: $workflowRef,
@@ -1940,22 +1830,6 @@ jobs:
                 workflowRefType: $workflowRefType,
                 targetRef: $targetRef,
                 targetSha: $targetSha,
-                releasePlan: $releasePlan,
-                releasePlanDigest: $releasePlanDigest,
-                validationAttempt: {
-                  request: $validationAttemptRequest,
-                  receipt: {
-                    schema: "openclaw.validation-attempt-receipt.v1",
-                    planDigest: $releasePlanDigest,
-                    requestDigest: $validationAttemptRequestDigest,
-                    runId: $runId,
-                    runAttempt: $runAttempt,
-                    workflowRef: $workflowRef,
-                    workflowFullRef: $workflowFullRef,
-                    workflowSha: $workflowSha,
-                    targetSha: $targetSha
-                  }
-                },
                 evidenceReuse: {
                   policy: $evidencePolicy,
                   runId: $evidenceRootRunId,
@@ -2002,12 +1876,8 @@ jobs:
             --arg skipPackageTelegramE2e "$SKIP_PACKAGE_TELEGRAM_E2E" \
             --arg allowUnreleasedChangelog "$ALLOW_UNRELEASED_CHANGELOG" \
             --arg pluginPrereleaseNodeExcludePatternsJson "$PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON" \
-            --argjson releasePlan "$RELEASE_PLAN_JSON" \
-            --arg releasePlanDigest "$RELEASE_PLAN_DIGEST" \
-            --argjson validationAttemptRequest "$VALIDATION_ATTEMPT_REQUEST_JSON" \
-            --arg validationAttemptRequestDigest "$VALIDATION_ATTEMPT_REQUEST_DIGEST" \
             '{
-              version: 4,
+              version: 3,
               workflowName: $workflowName,
               runId: $runId,
               runAttempt: $runAttempt,
@@ -2017,22 +1887,6 @@ jobs:
               workflowRefType: $workflowRefType,
               targetRef: $targetRef,
               targetSha: $targetSha,
-              releasePlan: $releasePlan,
-              releasePlanDigest: $releasePlanDigest,
-              validationAttempt: {
-                request: $validationAttemptRequest,
-                receipt: {
-                  schema: "openclaw.validation-attempt-receipt.v1",
-                  planDigest: $releasePlanDigest,
-                  requestDigest: $validationAttemptRequestDigest,
-                  runId: $runId,
-                  runAttempt: $runAttempt,
-                  workflowRef: $workflowRef,
-                  workflowFullRef: $workflowFullRef,
-                  workflowSha: $workflowSha,
-                  targetSha: $targetSha
-                }
-              },
               releaseProfile: $releaseProfile,
               rerunGroup: $rerunGroup,
               runReleaseSoak: $runReleaseSoak,

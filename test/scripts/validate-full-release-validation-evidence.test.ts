@@ -1,13 +1,6 @@
 // Full release validation evidence tests cover producer and candidate binding.
 import { describe, expect, it, vi } from "vitest";
 import {
-  createReleasePlanLock,
-  sha256Digest,
-  VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-  VALIDATION_ATTEMPT_RECEIPT_SCHEMA,
-  validateValidationAttemptRequest,
-} from "../../scripts/release-plan-contract.mjs";
-import {
   isShaPinnedReleaseValidationBranch,
   normalizeFullReleaseValidationRun,
   validateFullReleaseValidationEvidence,
@@ -48,59 +41,6 @@ function releaseManifest(overrides: Record<string, unknown> = {}) {
     targetSha,
     ...overrides,
   };
-}
-
-function releaseManifestV4(overrides: Record<string, unknown> = {}) {
-  const lock = createReleasePlanLock({
-    schema: "openclaw.release-plan.v1",
-    releaseId: "2026.8.1-beta.3",
-    version: "2026.8.1-beta.3",
-    tag: "v2026.8.1-beta.3",
-    candidateSha: targetSha,
-    tooling: {
-      repository: "openclaw/openclaw",
-      workflowPath: ".github/workflows/full-release-validation.yml",
-      ref: "main",
-      fullRef: "refs/heads/main",
-      sha: workflowSha,
-    },
-    purpose: "beta-publish",
-    packages: [{ kind: "npm", name: "openclaw" }],
-    platforms: ["linux"],
-    validation: {
-      profile: "beta",
-      requiredGroups: ["all"],
-      exceptions: [],
-    },
-  });
-  const request = validateValidationAttemptRequest({
-    schema: VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-    planDigest: lock.digest,
-    rerunGroup: "all",
-    filters: {},
-    failFast: false,
-    reuseEvidence: true,
-  });
-  return releaseManifest({
-    version: 4,
-    releasePlan: lock.plan,
-    releasePlanDigest: lock.digest,
-    validationAttempt: {
-      request,
-      receipt: {
-        schema: VALIDATION_ATTEMPT_RECEIPT_SCHEMA,
-        planDigest: lock.digest,
-        requestDigest: sha256Digest(request),
-        runId: "123",
-        runAttempt: "2",
-        workflowRef: pinnedBranch,
-        workflowFullRef: `refs/heads/${pinnedBranch}`,
-        workflowSha,
-        targetSha,
-      },
-    },
-    ...overrides,
-  });
 }
 
 function exactTargetEvidenceReuse() {
@@ -183,35 +123,6 @@ describe("full release validation evidence", () => {
     expect(result.source).toBe("sha-pinned-main");
     expect(isTrustedMainAncestor).toHaveBeenCalledWith(workflowSha);
     expect(isShaPinnedReleaseValidationBranch(pinnedBranch)).toBe(true);
-  });
-
-  it("accepts contract 3 evidence bound to one immutable plan and attempt receipt", () => {
-    const manifest = releaseManifestV4();
-    const result = validateFullReleaseValidationEvidence({
-      run: releaseRun(),
-      manifest,
-      expectedRepository: "openclaw/openclaw",
-      expectedRunId: "123",
-      expectedTargetSha: targetSha,
-      expectedReleasePlanDigest: (manifest as Record<string, unknown>).releasePlanDigest as string,
-      isTrustedMainAncestor: () => true,
-    });
-
-    expect(result.source).toBe("sha-pinned-main");
-  });
-
-  it("keeps contract 2 readable but rejects it when contract 3 is required", () => {
-    expect(() =>
-      validateFullReleaseValidationEvidence({
-        run: releaseRun(),
-        manifest: releaseManifest(),
-        expectedRepository: "openclaw/openclaw",
-        expectedRunId: "123",
-        expectedTargetSha: targetSha,
-        expectedReleasePlanDigest: `sha256:${"c".repeat(64)}`,
-        isTrustedMainAncestor: () => true,
-      }),
-    ).toThrow("requires a version 4 release plan manifest");
   });
 
   it("accepts canonical SHA-pinned evidence exactly bound to a protected tooling tag", () => {

@@ -9,7 +9,6 @@ const RELEASE_PUBLISH_REF_PATTERN = /^release-publish\/([a-f0-9]{12})-([1-9][0-9
 const RELEASE_CI_REF_PATTERN = /^release-ci\/([a-f0-9]{12})-([1-9][0-9]*)$/u;
 const DIRECT_WORKFLOW_REF_PATTERN =
   /^(?:main|release\/[0-9]{4}\.(?:[1-9]|1[0-2])\.[1-9][0-9]*|extended-stable\/[0-9]{4}\.(?:[1-9]|1[0-2])\.33|tideclaw\/alpha\/[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}Z)$/u;
-const SUPPORTED_RELEASE_TOOLING_CONTRACTS = new Set(["1", "2", "3"]);
 const GH_COMMAND_TIMEOUT_MS = 60_000;
 
 function fail(message) {
@@ -67,9 +66,6 @@ export function resolveReleaseToolingIdentity({
   const contract = requiredString(workflowContract, "release tooling contract");
   if (!/^[1-9][0-9]*$/u.test(contract)) {
     fail("release tooling contract must be a positive integer.");
-  }
-  if (!SUPPORTED_RELEASE_TOOLING_CONTRACTS.has(contract)) {
-    fail(`release tooling contract ${contract} is unsupported.`);
   }
   const ref = requiredString(workflowRef, "workflow ref");
   const fullRef = requiredString(workflowFullRef, "workflow full ref");

@@ -24,10 +24,6 @@ on:
         description: Exact Full Release Validation run attempt; when omitted, the current attempt is resolved once before publish
         required: false
         type: string
-      release_plan_digest:
-        description: Exact openclaw.release-plan.v1 digest approved for publication
-        required: true
-        type: string
       windows_node_tag:
         description: Exact openclaw-windows-node release tag, required for stable OpenClaw publish
         required: false
@@ -124,7 +120,6 @@ jobs:
           PREFLIGHT_RUN_ID: ${{ inputs.preflight_run_id }}
           FULL_RELEASE_VALIDATION_RUN_ID: ${{ inputs.full_release_validation_run_id }}
           FULL_RELEASE_VALIDATION_RUN_ATTEMPT: ${{ inputs.full_release_validation_run_attempt }}
-          RELEASE_PLAN_DIGEST: ${{ inputs.release_plan_digest }}
           OPENCLAW_NPM_RESUME_RUN_ID: ${{ inputs.openclaw_npm_resume_run_id }}
           WINDOWS_NODE_TAG: ${{ inputs.windows_node_tag }}
           WINDOWS_NODE_INSTALLER_DIGESTS: ${{ inputs.windows_node_installer_digests }}
@@ -174,10 +169,6 @@ jobs:
           fi
           if [[ -n "${FULL_RELEASE_VALIDATION_RUN_ATTEMPT}" && ! "${FULL_RELEASE_VALIDATION_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]; then
             echo "full_release_validation_run_attempt must be a positive integer." >&2
-            exit 1
-          fi
-          if [[ ! "${RELEASE_PLAN_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-            echo "release_plan_digest must be an exact SHA256 digest." >&2
             exit 1
           fi
           if [[ -n "${OPENCLAW_NPM_RESUME_RUN_ID}" && ! "${OPENCLAW_NPM_RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
@@ -481,10 +472,6 @@ jobs:
           mkdir -p "${tooling_dir}/lib"
           gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/validate-full-release-validation-evidence.mjs?ref=${WORKFLOW_SHA}" \
             --jq .content | base64 --decode > "${tooling_dir}/validate-full-release-validation-evidence.mjs"
-          gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/release-plan-contract.mjs?ref=${WORKFLOW_SHA}" \
-            --jq .content | base64 --decode > "${tooling_dir}/release-plan-contract.mjs"
-          gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/lib/record-shared.mjs?ref=${WORKFLOW_SHA}" \
-            --jq .content | base64 --decode > "${tooling_dir}/lib/record-shared.mjs"
           gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/release-ci-summary.mjs?ref=${WORKFLOW_SHA}" \
             --jq .content | base64 --decode > "${tooling_dir}/release-ci-summary.mjs"
           gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/lib/plain-gh.mjs?ref=${WORKFLOW_SHA}" \
@@ -601,7 +588,6 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           EXPECTED_SHA: ${{ steps.ref.outputs.sha }}
           EXPECTED_RELEASE_PROFILE: ${{ inputs.release_profile }}
-          EXPECTED_RELEASE_PLAN_DIGEST: ${{ inputs.release_plan_digest }}
           EXPECTED_WORKFLOW_BRANCH: ${{ github.ref_name }}
           TRUSTED_WORKFLOW_FULL_REF: ${{ github.ref }}
           TRUSTED_WORKFLOW_REF: ${{ github.ref_name }}
@@ -609,7 +595,6 @@ jobs:
           RUN_JSON_FILE: ${{ runner.temp }}/full-release-validation-run.json
           VALIDATOR_FILE: ${{ runner.temp }}/release-validation-tooling/validate-full-release-validation-evidence.mjs
           STRICT_VALIDATOR_FILE: ${{ runner.temp }}/release-validation-tooling/release-ci-summary.mjs
-          RELEASE_PLAN_VALIDATOR_FILE: ${{ runner.temp }}/release-validation-tooling/release-plan-contract.mjs
         run: |
           set -euo pipefail
           manifest="${RUNNER_TEMP}/full-release-validation-manifest/full-release-validation-manifest.json"
@@ -633,7 +618,6 @@ jobs:
           fi
           TRUSTED_MAIN_REF="${trusted_workflow_commit_ref}" \
             MANIFEST_FILE="$manifest" \
-            EXPECTED_RELEASE_PLAN_DIGEST="$EXPECTED_RELEASE_PLAN_DIGEST" \
             node "$VALIDATOR_FILE" < "$RUN_JSON_FILE"
           node "$STRICT_VALIDATOR_FILE" \
             --validate-run "$FULL_RELEASE_VALIDATION_RUN_ID" \
@@ -643,25 +627,6 @@ jobs:
             --json \
             --verifier-source-sha "$GITHUB_SHA" \
             --verifier-source-file "$STRICT_VALIDATOR_FILE" >/dev/null
-
-          MANIFEST_FILE="$manifest" \
-            RELEASE_TAG="$RELEASE_TAG" \
-            EXPECTED_SHA="$EXPECTED_SHA" \
-            RELEASE_PLAN_VALIDATOR_FILE="$RELEASE_PLAN_VALIDATOR_FILE" \
-            node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          import { pathToFileURL } from "node:url";
-
-          const manifest = JSON.parse(readFileSync(process.env.MANIFEST_FILE, "utf8"));
-          const { assertPublishableReleasePlan } = await import(
-            pathToFileURL(process.env.RELEASE_PLAN_VALIDATOR_FILE)
-          );
-          assertPublishableReleasePlan(
-            manifest.releasePlan,
-            process.env.RELEASE_TAG,
-            process.env.EXPECTED_SHA,
-          );
-          NODE
 
           workflow_name="$(jq -r '.workflowName // ""' "$manifest")"
           target_sha="$(jq -r '.targetSha // ""' "$manifest")"

@@ -29,14 +29,6 @@ import {
 import { readBoundedResponseText } from "./lib/bounded-response.mjs";
 import { validatePluginSdkApiReleaseEvidence } from "./plugin-sdk-api-release-evidence.mjs";
 import {
-  assertPublishableReleasePlan,
-  canonicalJson,
-  readReleasePlanLock,
-  sha256Digest,
-  VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-  validateValidationAttemptRequest,
-} from "./release-plan-contract.mjs";
-import {
   dedicatedSectionVersionForTag,
   extractChangelogReleaseSections,
   extractChangelogSection,
@@ -151,7 +143,6 @@ Options:
   --workflow-ref <ref>                Trusted workflow ref. Default: main; matching Tideclaw branch required for alpha.
   --repo <owner/repo>                 GitHub repo. Default: ${DEFAULT_REPO}
   --full-release-run <id>             Reuse successful Full Release Validation run.
-  --release-plan-lock <path>          Canonical openclaw.release-plan-lock.v1 file.
   --npm-preflight-run <id>            Reuse successful OpenClaw NPM Release preflight run.
   --plugin-sdk-api-acknowledgement <digest>
                                       8-character digest from the Plugin SDK API diff report.
@@ -213,8 +204,6 @@ export function parseArgs(argv: string[]) {
     targetSha: "",
     workflowRef: "",
     fullReleaseRunId: "",
-    releasePlanLockPath: "",
-    releasePlanDigest: "",
     npmPreflightRunId: "",
     pluginSdkApiAcknowledgement: "",
     windowsNodeTag: "",
@@ -233,7 +222,6 @@ export function parseArgs(argv: string[]) {
           ["--workflow-ref", "workflowRef"],
           ["--repo", "repo"],
           ["--full-release-run", "fullReleaseRunId"],
-          ["--release-plan-lock", "releasePlanLockPath"],
           ["--npm-preflight-run", "npmPreflightRunId"],
           ["--plugin-sdk-api-acknowledgement", "pluginSdkApiAcknowledgement"],
           ["--windows-node-tag", "windowsNodeTag"],
@@ -1247,9 +1235,6 @@ export function fullReleaseTrustedWorkflowFields({
   if (!inputs || !Object.hasOwn(inputs, "trusted_workflow_json")) {
     throw new Error(`Full Release Validation contract ${contract} requires trusted_workflow_json`);
   }
-  if (contract === "3" && !Object.hasOwn(inputs, "release_contract_json")) {
-    throw new Error("Full Release Validation contract 3 requires release_contract_json");
-  }
   if (!/^[a-f0-9]{40}$/u.test(workflowSha)) {
     throw new Error("Full Release Validation trusted workflow SHA must be a full lowercase SHA");
   }
@@ -1466,9 +1451,6 @@ export function buildPublishCommand(
     npmTelegramRunId?: string;
   },
 ) {
-  if (!/^sha256:[a-f0-9]{64}$/u.test(options.releasePlanDigest)) {
-    throw new Error("release publish requires an exact release plan digest");
-  }
   const workflowRef = options.tag.includes("-alpha.") ? options.workflowRef : "main";
   if (options.tag.includes("-alpha.") && !TIDECLAW_ALPHA_WORKFLOW_REF_PATTERN.test(workflowRef)) {
     throw new Error(
@@ -1484,7 +1466,6 @@ export function buildPublishCommand(
     ["npm_dist_tag", options.npmDistTag],
     ["plugin_publish_scope", options.pluginPublishScope],
     ["publish_openclaw_npm", "true"],
-    ["release_plan_digest", options.releasePlanDigest],
     ["release_profile", "from-validation"],
     ["wait_for_clawhub", "false"],
   ];
@@ -1810,28 +1791,9 @@ async function main() {
     return;
   }
   options.outputDir ||= join(".artifacts", "release-candidate", options.tag);
-  if (!options.targetSha) {
-    throw new Error("--target-sha is required by release tooling contract 3");
-  }
   const targetSha = gitRevParse(options.targetSha || "HEAD", targetRoot);
   assertPlannedReleaseTagIsAbsent(options.tag, (tag) => remoteTagExists(tag, targetRoot));
   const toolingSha = gitRevParse("HEAD", TOOLING_ROOT);
-  if (!options.releasePlanLockPath) {
-    throw new Error("--release-plan-lock is required by release tooling contract 3");
-  }
-  const releasePlanLock = readReleasePlanLock(options.releasePlanLockPath);
-  const releasePlan = assertPublishableReleasePlan(releasePlanLock.plan, options.tag, targetSha);
-  if (
-    releasePlan.version !== options.tag.replace(/^v/u, "") ||
-    releasePlan.tooling.repository !== options.repo ||
-    releasePlan.tooling.workflowPath !== ".github/workflows/full-release-validation.yml" ||
-    releasePlan.tooling.ref !== options.workflowRef ||
-    releasePlan.tooling.fullRef !== `refs/heads/${options.workflowRef}` ||
-    releasePlan.tooling.sha !== toolingSha
-  ) {
-    throw new Error("release plan does not match the checklist candidate and trusted tooling");
-  }
-  options.releasePlanDigest = releasePlanLock.digest;
   const latestTrustedToolingSha = fetchTrustedWorkflowSha(options.workflowRef, TOOLING_ROOT);
   // The outer process pins a clean main commit before creating this tooling checkout.
   // A newer main tip must not invalidate that immutable, still-trusted ancestor mid-run.
@@ -1907,26 +1869,10 @@ async function main() {
         "utf8",
       ),
     });
-    const validationAttemptRequest = validateValidationAttemptRequest({
-      schema: VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-      planDigest: releasePlanLock.digest,
-      rerunGroup: "all",
-      filters: {
-        crossOsSuite: "",
-        liveSuite: "",
-        npmTelegramScenario: "",
-      },
-      failFast: false,
-      reuseEvidence: true,
-    });
     options.fullReleaseRunId = dispatchWorkflow(options.repo, workflowFile, options.workflowRef, {
       ref: targetSha,
       ...(targetContextRef ? { target_context_ref: targetContextRef } : {}),
       ...trustedWorkflowFields,
-      release_contract_json: canonicalJson({
-        releasePlanLock,
-        validationAttemptRequest,
-      }),
       provider: options.provider,
       mode: options.mode,
       release_profile: options.releaseProfile,
@@ -2019,7 +1965,6 @@ async function main() {
     expectedRepository: options.repo,
     expectedRunId: options.fullReleaseRunId,
     expectedTargetSha: targetSha,
-    expectedReleasePlanDigest: releasePlanLock.digest,
     expectedWorkflowBranch: options.workflowRef,
     isTrustedMainAncestor: (sha: string) => gitIsAncestor(sha, "refs/remotes/origin/main"),
     validateEvidenceReuseStrictly: ({ repository, runId }: { repository: string; runId: string }) =>
@@ -2043,9 +1988,6 @@ async function main() {
     targetSha,
     releaseProfile: options.releaseProfile,
   });
-  if (sha256Digest(fullManifest.releasePlan) !== releasePlanLock.digest) {
-    throw new Error("full validation manifest release plan does not match the checklist plan");
-  }
   const tarballPath = join(
     npmDir,
     requireString(npmManifest.tarballName, "npm preflight tarball name"),

@@ -59,11 +59,11 @@ Load `$release-openclaw-ci` and `$openclaw-testing`. This is validation only, ne
 
    ```bash
    MAIN_SHA="<exact-main-sha>"
-   TOOLING_SHA="<exact-main-tooling-sha>"
-   pnpm ci:full-release \
-     --sha "$MAIN_SHA" \
-     --workflow-sha "$TOOLING_SHA" \
-     --release-plan-lock release-plan-lock.json \
+   gh workflow run full-release-validation.yml \
+     --repo openclaw/openclaw \
+     --ref main \
+     -f ref="$MAIN_SHA" \
+     -f expected_sha="$MAIN_SHA" \
      -f provider=openai \
      -f mode=both \
      -f release_profile=full \

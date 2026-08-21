@@ -12,17 +12,10 @@ import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { isRecord as isJsonRecord } from "../packages/normalization-core/src/record-coerce.ts";
 import { execGhRead } from "./lib/plain-gh.mjs";
-import {
-  canonicalJson,
-  readReleasePlanLock,
-  sha256Digest,
-  VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-  validateValidationAttemptRequest,
-} from "./release-plan-contract.mjs";
 
 const WORKFLOW = "full-release-validation.yml";
 const TRUSTED_WORKFLOW_PATH = `.github/workflows/${WORKFLOW}`;
-const RELEASE_ISOLATION_TOOLING_CONTRACT = "3";
+const RELEASE_ISOLATION_TOOLING_CONTRACT = "2";
 const RELEASE_ISOLATION_TOOLING_CONTRACT_ENV = "RELEASE_ISOLATION_TOOLING_CONTRACT";
 const RELEASE_EVIDENCE_VERIFIER_PATHS = [
   "scripts/release-ci-summary.mjs",
@@ -68,7 +61,7 @@ type TemporaryRefParams = {
   evidenceVerified: boolean;
 };
 type TrustedWorkflowHarness = {
-  contract: "1" | "2" | "3";
+  contract: "1" | "2";
   verifierPath: string;
 };
 
@@ -84,7 +77,7 @@ function displayValue(value: unknown): string {
 }
 
 function usage() {
-  console.error(`Usage: node scripts/full-release-validation-at-sha.mjs [--sha <target-sha>] [--target-ref <canonical-release-branch-or-tag>] [--workflow-sha <trusted-tooling-sha>] [--trusted-workflow-ref <main-or-release-publish-tag>] [--release-plan-lock <path>] [--keep-branch] [--dry-run] [-- -f key=value ...]
+  console.error(`Usage: node scripts/full-release-validation-at-sha.mjs [--sha <target-sha>] [--target-ref <canonical-release-branch-or-tag>] [--workflow-sha <trusted-tooling-sha>] [--trusted-workflow-ref <main-or-release-publish-tag>] [--keep-branch] [--dry-run] [-- -f key=value ...]
 
 Creates temporary remote branches pinned to the exact Tooling SHA and Validation SHA,
 dispatches Full Release Validation with the full Validation SHA as its ref input
@@ -139,7 +132,6 @@ export function parseArgs(argv: string[]) {
     targetRef: "",
     trustedWorkflowRef: "main",
     workflowSha: "",
-    releasePlanLock: "",
     keepBranch: false,
     dryRun: false,
     inputs,
@@ -168,11 +160,6 @@ export function parseArgs(argv: string[]) {
     }
     if (arg === "--target-ref") {
       args.targetRef = readOptionValue(argv, i, arg);
-      i += 1;
-      continue;
-    }
-    if (arg === "--release-plan-lock") {
-      args.releasePlanLock = readOptionValue(argv, i, arg);
       i += 1;
       continue;
     }
@@ -251,14 +238,6 @@ export function parseArgs(argv: string[]) {
   }
   if (Object.hasOwn(args.inputs, "trusted_workflow_json")) {
     throw new Error("SHA-pinned release validation reserves trusted_workflow_json");
-  }
-  if (
-    Object.hasOwn(args.inputs, "release_plan_json") ||
-    Object.hasOwn(args.inputs, "release_plan_digest") ||
-    Object.hasOwn(args.inputs, "validation_attempt_request_json") ||
-    Object.hasOwn(args.inputs, "release_contract_json")
-  ) {
-    throw new Error("SHA-pinned release validation reserves release plan contract inputs");
   }
   if (
     args.targetRef &&
@@ -683,7 +662,7 @@ export function assertTrustedWorkflowHarness(
     isJsonRecord(workflow) && isJsonRecord(workflow.env)
       ? workflow.env[RELEASE_ISOLATION_TOOLING_CONTRACT_ENV]
       : undefined;
-  if (contract !== "1" && contract !== "2" && contract !== RELEASE_ISOLATION_TOOLING_CONTRACT) {
+  if (contract !== "1" && contract !== RELEASE_ISOLATION_TOOLING_CONTRACT) {
     throw new Error(
       `Tooling SHA ${workflowSha} does not declare a supported ${RELEASE_ISOLATION_TOOLING_CONTRACT_ENV} in ${TRUSTED_WORKFLOW_PATH}`,
     );
@@ -701,19 +680,11 @@ export function assertTrustedWorkflowHarness(
     );
   }
   if (
-    (contract === "2" || contract === RELEASE_ISOLATION_TOOLING_CONTRACT) &&
+    contract === RELEASE_ISOLATION_TOOLING_CONTRACT &&
     !Object.hasOwn(workflowInputs, "trusted_workflow_json")
   ) {
     throw new Error(
-      `Tooling SHA ${workflowSha} declares ${RELEASE_ISOLATION_TOOLING_CONTRACT_ENV}=${contract} but is missing workflow_dispatch input trusted_workflow_json in ${TRUSTED_WORKFLOW_PATH}`,
-    );
-  }
-  if (
-    contract === RELEASE_ISOLATION_TOOLING_CONTRACT &&
-    !Object.hasOwn(workflowInputs, "release_contract_json")
-  ) {
-    throw new Error(
-      `Tooling SHA ${workflowSha} declares ${RELEASE_ISOLATION_TOOLING_CONTRACT_ENV}=3 but is missing release plan workflow inputs in ${TRUSTED_WORKFLOW_PATH}`,
+      `Tooling SHA ${workflowSha} declares ${RELEASE_ISOLATION_TOOLING_CONTRACT_ENV}=2 but is missing workflow_dispatch input trusted_workflow_json in ${TRUSTED_WORKFLOW_PATH}`,
     );
   }
   const verifierPath = RELEASE_EVIDENCE_VERIFIER_PATHS.find((relativePath) =>
@@ -786,51 +757,6 @@ function main() {
   if (trustedWorkflowHarness.contract === "1") {
     args.inputs.reuse_evidence = "false";
   }
-  if (trustedWorkflowHarness.contract === "3" && (!args.sha || !args.workflowSha)) {
-    throw new Error(
-      "release tooling contract 3 requires explicit --sha and --workflow-sha; moving defaults are not allowed",
-    );
-  }
-  const releasePlanLock = args.releasePlanLock
-    ? readReleasePlanLock(args.releasePlanLock)
-    : undefined;
-  if (trustedWorkflowHarness.contract === "3" && !releasePlanLock) {
-    throw new Error("release tooling contract 3 requires --release-plan-lock");
-  }
-  if (releasePlanLock) {
-    const plan = releasePlanLock.plan;
-    const expectedFullRef =
-      args.trustedWorkflowRef === "main"
-        ? "refs/heads/main"
-        : `refs/tags/${args.trustedWorkflowRef}`;
-    if (
-      plan.candidateSha !== targetSha ||
-      plan.version !== targetVersion ||
-      plan.tooling.repository !== "openclaw/openclaw" ||
-      plan.tooling.workflowPath !== TRUSTED_WORKFLOW_PATH ||
-      plan.tooling.ref !== args.trustedWorkflowRef ||
-      plan.tooling.fullRef !== expectedFullRef ||
-      plan.tooling.sha !== workflowSha
-    ) {
-      throw new Error(
-        "release plan does not match the exact candidate and protected tooling identity",
-      );
-    }
-  }
-  const validationAttemptRequest = releasePlanLock
-    ? validateValidationAttemptRequest({
-        schema: VALIDATION_ATTEMPT_REQUEST_SCHEMA,
-        planDigest: releasePlanLock.digest,
-        rerunGroup: args.inputs.rerun_group,
-        filters: {
-          crossOsSuite: args.inputs.cross_os_suite_filter ?? "",
-          liveSuite: args.inputs.live_suite_filter ?? "",
-          npmTelegramScenario: args.inputs.npm_telegram_scenario ?? "",
-        },
-        failFast: args.inputs.fail_fast === "true",
-        reuseEvidence: args.inputs.reuse_evidence === "true",
-      })
-    : undefined;
   const shortSha = workflowSha.slice(0, 12);
   const branch = `release-ci/${shortSha}-${Date.now()}`;
   const remoteBranchRef = `refs/heads/${branch}`;
@@ -839,7 +765,7 @@ function main() {
   const dispatchInputs = {
     ref: targetSha,
     expected_sha: targetSha,
-    ...(trustedWorkflowHarness.contract !== "1"
+    ...(trustedWorkflowHarness.contract === RELEASE_ISOLATION_TOOLING_CONTRACT
       ? {
           trusted_workflow_json: JSON.stringify({
             ref: args.trustedWorkflowRef,
@@ -851,14 +777,6 @@ function main() {
           }),
         }
       : {}),
-    ...(trustedWorkflowHarness.contract === "3" && releasePlanLock && validationAttemptRequest
-      ? {
-          release_contract_json: canonicalJson({
-            releasePlanLock,
-            validationAttemptRequest,
-          }),
-        }
-      : {}),
     ...(targetContextRef !== targetSha ? { target_context_ref: targetContextRef } : {}),
     ...args.inputs,
   };
@@ -866,10 +784,6 @@ function main() {
   console.log(`Validation SHA: ${targetSha}`);
   console.log(`Tooling SHA: ${workflowSha}`);
   console.log(`Trusted workflow ref: ${args.trustedWorkflowRef}`);
-  if (releasePlanLock) {
-    console.log(`Release plan: ${releasePlanLock.digest} purpose=${releasePlanLock.plan.purpose}`);
-    console.log(`Validation attempt request: ${sha256Digest(validationAttemptRequest)}`);
-  }
   console.log(
     `Frozen validation tuple: candidate=${targetSha} tooling=${workflowSha} rerun_group=${args.inputs.rerun_group}`,
   );
