@@ -324,6 +324,7 @@ describe("plugin registry runtime config scope", () => {
   it("runs node helpers with the owning plugin scope", async () => {
     let listScope = getPluginRuntimeGatewayRequestScope();
     let invokeScope = getPluginRuntimeGatewayRequestScope();
+    let duplexScope = getPluginRuntimeGatewayRequestScope();
     const runtime = createPluginRuntime();
     runtime.nodes = {
       list: vi.fn(async () => {
@@ -333,6 +334,15 @@ describe("plugin registry runtime config scope", () => {
       invoke: vi.fn(async () => {
         invokeScope = getPluginRuntimeGatewayRequestScope();
         return { ok: true };
+      }),
+      openDuplex: vi.fn(async () => {
+        duplexScope = getPluginRuntimeGatewayRequestScope();
+        return {
+          send: vi.fn(async () => {}),
+          onMessage: vi.fn(() => () => {}),
+          closed: Promise.resolve({ ok: true }),
+          close: vi.fn(),
+        };
       }),
     };
     const pluginRegistry = createTestRegistry(runtime);
@@ -352,12 +362,17 @@ describe("plugin registry runtime config scope", () => {
       command: "browser.proxy",
       scopes: ["operator.admin"],
     });
+    await api.runtime.nodes.openDuplex({ nodeId: "node-1", command: "image.bridge" });
 
     expect(listScope).toMatchObject({
       pluginId: "google-meet",
       pluginSource: "/plugins/google-meet/index.js",
     });
     expect(invokeScope).toMatchObject({
+      pluginId: "google-meet",
+      pluginSource: "/plugins/google-meet/index.js",
+    });
+    expect(duplexScope).toMatchObject({
       pluginId: "google-meet",
       pluginSource: "/plugins/google-meet/index.js",
     });

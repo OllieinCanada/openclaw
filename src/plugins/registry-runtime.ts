@@ -793,6 +793,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           return {
             list: (params) => runWithPluginScope(() => nodes.list(params)),
             invoke: (params) => runWithPluginScope(() => nodes.invoke(params)),
+            openDuplex: (params) => runWithPluginScope(() => nodes.openDuplex(params)),
           } satisfies PluginRuntime["nodes"];
         }
         if (prop === "agent") {
