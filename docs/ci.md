@@ -179,9 +179,11 @@ PR baseline ratchets derive their comparison state from the checked-out syntheti
 gh workflow run ci.yml --ref release/YYYY.M.PATCH
 gh workflow run ci.yml --ref main -f target_ref=<branch-or-sha> -f include_android=true
 VALIDATION_SHA="<full-commit-sha>"
-gh workflow run full-release-validation.yml --ref main \
-  -f ref="$VALIDATION_SHA" \
-  -f expected_sha="$VALIDATION_SHA"
+TOOLING_SHA="<exact-main-tooling-sha>"
+pnpm ci:full-release \
+  --sha "$VALIDATION_SHA" \
+  --workflow-sha "$TOOLING_SHA" \
+  --release-plan-lock release-plan-lock.json
 ```
 
 Gateway extended-stable runs npm preflight, Full Release Validation, and plugin
@@ -397,7 +399,8 @@ VALIDATION_SHA="<full-release-candidate-sha>"
 pnpm ci:full-release \
   --sha "$VALIDATION_SHA" \
   --target-ref release/YYYY.M.PATCH \
-  --workflow-sha "$TOOLING_SHA"
+  --workflow-sha "$TOOLING_SHA" \
+  --release-plan-lock release-plan-lock.json
 ```
 
 GitHub workflow dispatch refs must be branches or tags, not raw commit SHAs. The

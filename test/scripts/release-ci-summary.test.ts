@@ -31,6 +31,13 @@ import {
   validateReleaseRunEvidence,
   validateTrustedProducerIdentity,
 } from "../../scripts/release-ci-summary.mjs";
+import {
+  createReleasePlanLock,
+  sha256Digest,
+  VALIDATION_ATTEMPT_RECEIPT_SCHEMA,
+  VALIDATION_ATTEMPT_REQUEST_SCHEMA,
+  validateValidationAttemptRequest,
+} from "../../scripts/release-plan-contract.mjs";
 
 const SCRIPT = "scripts/release-ci-summary.mjs";
 const MANIFEST_ARTIFACT_ENTRY = "full-release-validation-manifest.json";
@@ -420,7 +427,7 @@ function rawManifest({
   rerunGroup?: string;
   runId?: string;
   targetSha?: string;
-  version?: 2 | 3;
+  version?: 2 | 3 | 4;
   workflowFullRef?: string;
   workflowRefType?: "branch" | "tag";
   workflowSha?: string;
@@ -436,7 +443,10 @@ function rawManifest({
   targetRef?: string;
   targetSha: string;
   validationInputs: Record<string, string>;
-  version: 2 | 3;
+  version: 2 | 3 | 4;
+  releasePlan?: unknown;
+  releasePlanDigest?: string;
+  validationAttempt?: unknown;
   workflowFullRef?: string;
   workflowName: string;
   workflowRef: string;
@@ -482,11 +492,63 @@ function rawManifest({
     workflowName: "Full Release Validation",
     workflowRef: "main",
     ...(workflowSha ? { workflowSha } : {}),
-    ...(version === 3
+    ...(version >= 3
       ? {
           workflowFullRef: workflowFullRef ?? "refs/heads/main",
           workflowRefType: workflowRefType ?? "branch",
         }
+      : {}),
+    ...(version === 4
+      ? (() => {
+          const lock = createReleasePlanLock({
+            schema: "openclaw.release-plan.v1",
+            releaseId: "2026.8.1-beta.3",
+            version: "2026.8.1-beta.3",
+            tag: "v2026.8.1-beta.3",
+            candidateSha: targetSha,
+            tooling: {
+              repository: "openclaw/openclaw",
+              workflowPath: ".github/workflows/full-release-validation.yml",
+              ref: "main",
+              fullRef: "refs/heads/main",
+              sha: workflowSha,
+            },
+            purpose: "beta-publish",
+            packages: [{ kind: "npm", name: "openclaw" }],
+            platforms: ["linux"],
+            validation: {
+              profile: "beta",
+              requiredGroups: ["all"],
+              exceptions: [],
+            },
+          });
+          const request = validateValidationAttemptRequest({
+            schema: VALIDATION_ATTEMPT_REQUEST_SCHEMA,
+            planDigest: lock.digest,
+            rerunGroup,
+            filters: {},
+            failFast: false,
+            reuseEvidence: true,
+          });
+          return {
+            releasePlan: lock.plan,
+            releasePlanDigest: lock.digest,
+            validationAttempt: {
+              request,
+              receipt: {
+                schema: VALIDATION_ATTEMPT_RECEIPT_SCHEMA,
+                planDigest: lock.digest,
+                requestDigest: sha256Digest(request),
+                runId,
+                runAttempt: "2",
+                workflowRef: "main",
+                workflowFullRef: workflowFullRef ?? "refs/heads/main",
+                workflowSha,
+                targetSha,
+              },
+            },
+          };
+        })()
       : {}),
   };
 }
@@ -500,7 +562,7 @@ function trustedMainPackageFixture({
   workflowRefType,
   workflowSha = "0".repeat(40),
 }: {
-  manifestVersion?: 2 | 3;
+  manifestVersion?: 2 | 3 | 4;
   parentPath?: string;
   targetSha?: string;
   workflowFullRef?: string;
@@ -1722,6 +1784,42 @@ describe("release CI summary child correlation", () => {
         workflowSha: "c".repeat(40),
       }),
     ).toThrow("release validation manifest workflow SHA mismatch");
+  });
+
+  it("binds v4 manifests to the immutable release plan and attempt receipt", () => {
+    const workflowSha = "b".repeat(40);
+    const manifest = validateParentManifest(rawManifest({ version: 4, workflowSha }), {
+      repository: "openclaw/openclaw",
+      runAttempt: 2,
+      runId: "29090000000",
+      workflowRef: "main",
+      workflowSha,
+    });
+
+    expect(manifest).toMatchObject({
+      version: 4,
+      releasePlan: {
+        candidateSha: "a".repeat(40),
+        purpose: "beta-publish",
+        tooling: { sha: workflowSha },
+      },
+      validationAttempt: {
+        receipt: {
+          runId: "29090000000",
+          workflowSha,
+        },
+      },
+    });
+    const forged = rawManifest({ version: 4, workflowSha });
+    (forged.validationAttempt as { receipt: { runId: string } }).receipt.runId = "1";
+    expect(() =>
+      validateParentManifest(forged, {
+        repository: "openclaw/openclaw",
+        runAttempt: 2,
+        runId: "29090000000",
+        workflowSha,
+      }),
+    ).toThrow("plan or attempt binding is invalid");
   });
 
   it("requires v3 manifests to record artifact-only performance publication", () => {

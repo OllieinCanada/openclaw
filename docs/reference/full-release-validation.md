@@ -15,14 +15,27 @@ refreshes Control UI locale output when the background bot has not landed it
 yet, then enforces the same strict zero-fallback check used by release CI.
 
 Freeze the product-complete pre-changelog commit as the **Code SHA** and select
-one trusted workflow commit as the **Tooling SHA**, then run:
+one trusted workflow commit as the **Tooling SHA**. Create the immutable plan
+lock once from a complete `openclaw.release-plan.v1` JSON document:
+
+```bash
+pnpm release:plan-lock -- create \
+  --input release-plan.json \
+  --output release-plan-lock.json
+```
+
+The plan records the release ID, version, tag, candidate SHA, exact tooling
+identity, purpose, package and platform inventory, and validation policy. It
+does not contain run IDs, timestamps, filters, local paths, or registry
+observations. Then run:
 
 ```bash
 TOOLING_SHA="<recorded-full-main-ancestor-sha>"
 pnpm ci:full-release \
   --sha <code-sha> \
   --target-ref release/YYYY.M.PATCH \
-  --workflow-sha "$TOOLING_SHA"
+  --workflow-sha "$TOOLING_SHA" \
+  --release-plan-lock release-plan-lock.json
 ```
 
 Record the Tooling SHA once for the release and reuse it for later Code-SHA,
@@ -60,10 +73,16 @@ canonical branch:
 
 ```bash
 RELEASE_SHA="$(git rev-parse HEAD)"
+RELEASE_CONTRACT_JSON="$(
+  node scripts/release-plan-lock.mjs envelope \
+    --lock release-plan-lock.json \
+    --rerun-group all
+)"
 gh workflow run full-release-validation.yml \
   --ref extended-stable/YYYY.M.33 \
   -f ref=extended-stable/YYYY.M.33 \
   -f expected_sha="$RELEASE_SHA" \
+  -f release_contract_json="$RELEASE_CONTRACT_JSON" \
   -f release_profile=stable
 ```
 

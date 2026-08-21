@@ -1,0 +1,35 @@
+{
+  "schema": "openclaw.release-plan-lock.v1",
+  "digest": "sha256:e593c97c6384d47235db433ae07a78bfdc22c82181df92ad179b9821d297b644",
+  "plan": {
+    "schema": "openclaw.release-plan.v1",
+    "releaseId": "2026.8.1-beta.3",
+    "version": "2026.8.1-beta.3",
+    "tag": "v2026.8.1-beta.3",
+    "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tooling": {
+      "repository": "openclaw/openclaw",
+      "workflowPath": ".github/workflows/full-release-validation.yml",
+      "ref": "release-publish/bbbbbbbbbbbb-123",
+      "fullRef": "refs/tags/release-publish/bbbbbbbbbbbb-123",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "purpose": "beta-publish",
+    "packages": [
+      {
+        "kind": "npm",
+        "name": "openclaw"
+      }
+    ],
+    "platforms": [
+      "linux"
+    ],
+    "validation": {
+      "profile": "beta",
+      "requiredGroups": [
+        "all"
+      ],
+      "exceptions": []
+    }
+  }
+}

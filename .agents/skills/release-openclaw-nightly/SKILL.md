@@ -223,10 +223,16 @@ GH="/usr/local/bin/gh-tideclaw-write"
 SHA="$(git rev-parse HEAD)"
 TAG="v$(node -p "require('./package.json').version")"
 BRANCH="$(git branch --show-current)"
+RELEASE_CONTRACT_JSON="$(
+  node scripts/release-plan-lock.mjs envelope \
+    --lock release-plan-lock.json \
+    --rerun-group all
+)"
 
 "$GH" workflow run full-release-validation.yml --repo openclaw/openclaw --ref "$BRANCH" \
   -f ref="$BRANCH" \
   -f expected_sha="$SHA" \
+  -f release_contract_json="$RELEASE_CONTRACT_JSON" \
   -f release_profile=beta \
   -f rerun_group=all
 

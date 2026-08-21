@@ -3,6 +3,12 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  sha256Digest,
+  validateReleasePlan,
+  validateValidationAttemptReceipt,
+  validateValidationAttemptRequest,
+} from "./release-plan-contract.mjs";
 
 const FULL_RELEASE_WORKFLOW = "Full Release Validation";
 const FULL_RELEASE_WORKFLOW_PATH = ".github/workflows/full-release-validation.yml";
@@ -63,6 +69,9 @@ function displayValue(value) {
  * @property {unknown} [workflowRefType]
  * @property {unknown} [targetRef]
  * @property {unknown} [targetSha]
+ * @property {unknown} [releasePlan]
+ * @property {unknown} [releasePlanDigest]
+ * @property {{ request?: unknown, receipt?: unknown }} [validationAttempt]
  * @property {{ changedPaths?: unknown, evidenceSha?: unknown, policy?: unknown, runId?: unknown, selectedRunId?: unknown }} [evidenceReuse]
  */
 /**
@@ -75,6 +84,7 @@ function displayValue(value) {
  * @property {string} [expectedTrustedWorkflowFullRef]
  * @property {string} [expectedTrustedWorkflowSha]
  * @property {string} [expectedWorkflowBranch]
+ * @property {string} [expectedReleasePlanDigest]
  * @property {(sha: string) => boolean} [isTrustedMainAncestor]
  * @property {(params: { repository: string, runId: string, targetSha: string }) => StrictReleaseEvidence} [validateEvidenceReuseStrictly]
  */
@@ -121,6 +131,7 @@ export function validateFullReleaseValidationEvidence({
   expectedTrustedWorkflowFullRef,
   expectedTrustedWorkflowSha,
   expectedWorkflowBranch,
+  expectedReleasePlanDigest,
   isTrustedMainAncestor,
   validateEvidenceReuseStrictly,
 }) {
@@ -172,9 +183,9 @@ export function validateFullReleaseValidationEvidence({
     );
   }
 
-  if (manifest.version !== 3) {
+  if (manifest.version !== 3 && manifest.version !== 4) {
     throw new Error(
-      `Full release validation manifest must use version 3, got ${displayValue(manifest.version)}.`,
+      `Full release validation manifest must use version 3 or 4, got ${displayValue(manifest.version)}.`,
     );
   }
   const manifestChecks = [
@@ -193,6 +204,48 @@ export function validateFullReleaseValidationEvidence({
         `Full release validation manifest ${key} mismatch: expected ${expected}, got ${displayValue(manifest[key])}.`,
       );
     }
+  }
+  if (manifest.version === 4) {
+    const releasePlan = validateReleasePlan(manifest.releasePlan);
+    const releasePlanDigest = sha256Digest(releasePlan);
+    if (manifest.releasePlanDigest !== releasePlanDigest) {
+      throw new Error(
+        `Full release validation release plan digest mismatch: expected ${releasePlanDigest}.`,
+      );
+    }
+    if (expectedReleasePlanDigest && expectedReleasePlanDigest !== releasePlanDigest) {
+      throw new Error(
+        `Full release validation release plan digest mismatch: expected ${expectedReleasePlanDigest}.`,
+      );
+    }
+    if (
+      releasePlan.candidateSha !== expectedTargetSha ||
+      releasePlan.tooling.repository !== expectedRepository ||
+      releasePlan.tooling.workflowPath !== FULL_RELEASE_WORKFLOW_PATH ||
+      releasePlan.tooling.fullRef !== trustedWorkflowFullRef ||
+      (expectedTrustedWorkflowSha && releasePlan.tooling.sha !== expectedTrustedWorkflowSha)
+    ) {
+      throw new Error(
+        "Full release validation release plan does not match the candidate and trusted tooling.",
+      );
+    }
+    const request = validateValidationAttemptRequest(manifest.validationAttempt?.request);
+    const receipt = validateValidationAttemptReceipt(manifest.validationAttempt?.receipt);
+    if (
+      request.planDigest !== releasePlanDigest ||
+      receipt.planDigest !== releasePlanDigest ||
+      receipt.requestDigest !== sha256Digest(request) ||
+      receipt.runId !== String(expectedRunId) ||
+      receipt.runAttempt !== String(run.runAttempt) ||
+      receipt.workflowRef !== run.headBranch ||
+      receipt.workflowFullRef !== expectedQualifiedRef ||
+      receipt.workflowSha !== run.headSha ||
+      receipt.targetSha !== expectedTargetSha
+    ) {
+      throw new Error("Full release validation attempt receipt does not match the observed run.");
+    }
+  } else if (expectedReleasePlanDigest) {
+    throw new Error("Release tooling contract 3 requires a version 4 release plan manifest.");
   }
 
   const pinnedMatch = PINNED_BRANCH_PATTERN.exec(run.headBranch ?? "");
@@ -382,6 +435,7 @@ function main() {
     expectedTrustedWorkflowFullRef: process.env.TRUSTED_WORKFLOW_FULL_REF,
     expectedTrustedWorkflowSha: process.env.TRUSTED_WORKFLOW_SHA,
     expectedWorkflowBranch: process.env.EXPECTED_WORKFLOW_BRANCH,
+    expectedReleasePlanDigest: process.env.EXPECTED_RELEASE_PLAN_DIGEST,
     isTrustedMainAncestor: (sha) => gitIsAncestor(sha, trustedMainRef),
     validateEvidenceReuseStrictly: ({ repository, runId }) =>
       runStrictReleaseEvidenceValidation({

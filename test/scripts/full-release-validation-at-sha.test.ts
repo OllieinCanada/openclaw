@@ -17,6 +17,7 @@ import {
   verifyTargetRef,
   verifyTrustedWorkflowRef,
 } from "../../scripts/full-release-validation-at-sha.mts";
+import { createReleasePlanLock } from "../../scripts/release-plan-contract.mjs";
 
 const SCRIPT_PATH = resolve("scripts/full-release-validation-at-sha.mjs");
 const CURRENT_WORKFLOW_SOURCE = readFileSync(
@@ -24,16 +25,22 @@ const CURRENT_WORKFLOW_SOURCE = readFileSync(
   "utf8",
 );
 const CONTRACT_ONE_WORKFLOW_SOURCE = CURRENT_WORKFLOW_SOURCE.replace(
-  'RELEASE_ISOLATION_TOOLING_CONTRACT: "2"',
+  'RELEASE_ISOLATION_TOOLING_CONTRACT: "3"',
   'RELEASE_ISOLATION_TOOLING_CONTRACT: "1"',
-).replace(
-  `      trusted_workflow_json:
+)
+  .replace(
+    `      trusted_workflow_json:
         description: Trusted release tooling identity JSON
-        required: true
+        required: false
+        default: ""
         type: string
 `,
-  "",
-);
+    "",
+  )
+  .replace(
+    /      (?:release_plan_json|release_plan_digest|validation_attempt_request_json):\n(?:        .*\n){3,4}/gu,
+    "",
+  );
 const LEGACY_WORKFLOW_SOURCE = `name: Full Release Validation
 on:
   workflow_dispatch:
@@ -175,9 +182,48 @@ if (args[0] === "workflow" && args[1] === "run") {
       trustedRefIndex >= 0 ? (extraArgs[trustedRefIndex + 1] ?? "") : "main";
     const trustedWorkflowFullRef =
       trustedWorkflowRef === "main" ? "refs/heads/main" : `refs/tags/${trustedWorkflowRef}`;
+    const releasePlanPath = join(root, "release-plan-lock.json");
+    writeFileSync(
+      releasePlanPath,
+      `${JSON.stringify(
+        createReleasePlanLock({
+          schema: "openclaw.release-plan.v1",
+          releaseId: "2026.8.1",
+          version: "2026.8.1",
+          tag: "v2026.8.1",
+          candidateSha: targetSha,
+          tooling: {
+            repository: "openclaw/openclaw",
+            workflowPath: ".github/workflows/full-release-validation.yml",
+            ref: trustedWorkflowRef,
+            fullRef: trustedWorkflowFullRef,
+            sha: workflowSha,
+          },
+          purpose: "stable-publish",
+          packages: [{ kind: "npm", name: "openclaw" }],
+          platforms: ["linux"],
+          validation: {
+            profile: "stable",
+            requiredGroups: ["all"],
+            exceptions: [],
+          },
+        }),
+        null,
+        2,
+      )}\n`,
+    );
     return spawnSync(
       process.execPath,
-      [SCRIPT_PATH, "--sha", targetSha, "--target-ref", releaseRef, ...extraArgs],
+      [
+        SCRIPT_PATH,
+        "--sha",
+        targetSha,
+        "--target-ref",
+        releaseRef,
+        "--release-plan-lock",
+        releasePlanPath,
+        ...extraArgs,
+      ],
       {
         cwd: checkout,
         encoding: "utf8",
@@ -578,7 +624,7 @@ describe("full-release-validation-at-sha", () => {
         },
         () => CURRENT_WORKFLOW_SOURCE,
       ),
-    ).toEqual({ contract: "2", verifierPath });
+    ).toEqual({ contract: "3", verifierPath });
     expect(checked).toEqual([workflowPath, verifierPath]);
     expect(() => assertTrustedWorkflowHarness("a".repeat(40), () => false)).toThrow(workflowPath);
     expect(() =>

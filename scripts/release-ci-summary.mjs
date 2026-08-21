@@ -11,6 +11,12 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { execGhRead, plainGhEnv, resolvePlainGhBin } from "./lib/plain-gh.mjs";
+import {
+  sha256Digest,
+  validateReleasePlan,
+  validateValidationAttemptReceipt,
+  validateValidationAttemptRequest,
+} from "./release-plan-contract.mjs";
 
 const DEFAULT_REPO = process.env.OPENCLAW_RELEASE_REPO || "openclaw/openclaw";
 const RELEASE_EVIDENCE_SCHEMA = "openclaw.release-validation-evidence/v3";
@@ -415,7 +421,7 @@ export function validateParentManifest(value, expected) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("release validation manifest must be an object");
   }
-  if (![2, 3].includes(value.version) || value.workflowName !== "Full Release Validation") {
+  if (![2, 3, 4].includes(value.version) || value.workflowName !== "Full Release Validation") {
     throw new Error("release validation manifest schema is unsupported");
   }
   if (String(value.runId) !== String(expected.runId)) {
@@ -437,7 +443,7 @@ export function validateParentManifest(value, expected) {
   let workflowSha;
   let workflowFullRef;
   let workflowRefType;
-  if (value.version === 3) {
+  if (value.version >= 3) {
     workflowSha = normalizeSha(value.workflowSha, "release validation manifest workflow SHA");
     if (expected.workflowSha !== undefined && workflowSha !== expected.workflowSha) {
       throw new Error("release validation manifest workflow SHA mismatch");
@@ -465,7 +471,7 @@ export function validateParentManifest(value, expected) {
     throw new Error("release validation manifest release soak value is invalid");
   }
   const controls = normalizeJsonObject(value.controls, "release validation manifest controls");
-  if (value.version === 3 && controls.performanceReportPublication !== "artifact-only") {
+  if (value.version >= 3 && controls.performanceReportPublication !== "artifact-only") {
     throw new Error("release validation manifest performance report publication mode is invalid");
   }
   const validationInputs =
@@ -521,10 +527,43 @@ export function validateParentManifest(value, expected) {
       selectedRunId: normalizeRequiredRunId(reuse.selectedRunId, "evidence reuse selected run ID"),
     };
   }
+  let releasePlan;
+  let releasePlanDigest;
+  let validationAttempt;
+  if (value.version === 4) {
+    releasePlan = validateReleasePlan(value.releasePlan);
+    releasePlanDigest = sha256Digest(releasePlan);
+    if (value.releasePlanDigest !== releasePlanDigest) {
+      throw new Error("release validation manifest release plan digest mismatch");
+    }
+    const request = validateValidationAttemptRequest(value.validationAttempt?.request);
+    const receipt = validateValidationAttemptReceipt(value.validationAttempt?.receipt);
+    if (
+      releasePlan.candidateSha !== targetSha ||
+      (expected.repository !== undefined &&
+        releasePlan.tooling.repository !== expected.repository) ||
+      releasePlan.tooling.workflowPath !== ".github/workflows/full-release-validation.yml" ||
+      releasePlan.tooling.sha !== workflowSha ||
+      request.planDigest !== releasePlanDigest ||
+      receipt.planDigest !== releasePlanDigest ||
+      receipt.requestDigest !== sha256Digest(request) ||
+      receipt.runId !== String(value.runId) ||
+      receipt.runAttempt !== String(value.runAttempt) ||
+      receipt.workflowRef !== value.workflowRef ||
+      receipt.workflowFullRef !== workflowFullRef ||
+      receipt.workflowSha !== workflowSha ||
+      receipt.targetSha !== targetSha
+    ) {
+      throw new Error("release validation manifest plan or attempt binding is invalid");
+    }
+    validationAttempt = { request, receipt };
+  }
   return {
     childRunIds,
     controls,
     evidenceReuse,
+    releasePlan,
+    releasePlanDigest,
     releaseProfile,
     rerunGroup,
     runAttempt: Number(value.runAttempt),
@@ -533,6 +572,7 @@ export function validateParentManifest(value, expected) {
     targetRef: String(value.targetRef ?? ""),
     targetSha,
     validationInputs,
+    validationAttempt,
     version: value.version,
     workflowFullRef,
     workflowSha,
@@ -1122,6 +1162,7 @@ function loadValidatedParentEvidence({ client, manifestPath, repository, runId }
     throw new Error(`successful parent run is missing its release validation manifest: ${runId}`);
   }
   const manifest = validateParentManifest(manifestEvidence.manifest, {
+    repository,
     runAttempt: parentRun.run_attempt,
     runId,
     workflowRef: parentRun.head_branch,
@@ -1197,8 +1238,8 @@ export function validateTrustedProducerIdentity(
     );
   }
   if (shaPinned) {
-    if (manifest.version !== 3) {
-      throw new Error("SHA-pinned release evidence requires a v3 manifest");
+    if (manifest.version < 3) {
+      throw new Error("SHA-pinned release evidence requires a v3 or v4 manifest");
     }
     if (!manifest.workflowRef.startsWith(`release-ci/${manifest.workflowSha.slice(0, 12)}-`)) {
       throw new Error("SHA-pinned release evidence branch does not match its workflow SHA");
@@ -1218,15 +1259,24 @@ export function validateTrustedProducerIdentity(
   }
 
   let workflowRefProof = "legacy-v2-main-ancestry";
-  if (manifest.version === 3) {
+  if (manifest.version >= 3) {
     if (manifest.workflowRefType !== "branch" || manifest.workflowFullRef !== expectedFullRef) {
       throw new Error("release evidence producer workflow full ref is not trusted");
     }
+    const manifestVersion = `manifest-v${manifest.version}`;
     workflowRefProof = protectedTagRoute
-      ? "manifest-v3-protected-tag-exact-sha"
+      ? `${manifestVersion}-protected-tag-exact-sha`
       : shaPinned
-        ? "manifest-v3-sha-pinned-main-ancestry"
-        : "manifest-v3-branch";
+        ? `${manifestVersion}-sha-pinned-main-ancestry`
+        : `${manifestVersion}-branch`;
+  }
+  if (
+    manifest.version === 4 &&
+    (manifest.releasePlan.tooling.fullRef !== trustedIdentity.fullRef ||
+      manifest.releasePlan.tooling.ref !== trustedIdentity.ref ||
+      manifest.releasePlan.tooling.sha !== trustedIdentity.sha)
+  ) {
+    throw new Error("release plan tooling identity does not match the trusted producer");
   }
 
   if (!protectedTagRoute) {
