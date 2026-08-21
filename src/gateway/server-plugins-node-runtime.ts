@@ -31,6 +31,18 @@ export async function openGatewayNodeDuplex(options: {
   if (!scope?.pluginId?.trim()) {
     throw new Error("Plugin node duplex commands require an active owning plugin identity.");
   }
+  const registrations = scope.pluginRegistry?.nodeHostCommands.filter(
+    (entry) => entry.command.command === params.command,
+  );
+  if (
+    registrations?.length !== 1 ||
+    registrations[0]?.pluginId !== scope.pluginId ||
+    registrations[0]?.command.duplex !== true
+  ) {
+    throw new Error(
+      `Node command "${params.command}" must be registered exactly once by plugin "${scope.pluginId}" and declare duplex: true.`,
+    );
+  }
   const callerIdentity = scope.client?.internal?.agentRuntimeIdentity;
   const context = getInProcessGatewayRequestContext(resolveGatewayContext);
   if (!context?.nodeRegistry) {

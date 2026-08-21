@@ -376,6 +376,7 @@ describe("plugin registry runtime config scope", () => {
       pluginId: "google-meet",
       pluginSource: "/plugins/google-meet/index.js",
     });
+    expect(duplexScope?.pluginRegistry).toBe(pluginRegistry.registry);
   });
 
   it("runs gateway requests with the owning plugin scope", async () => {
