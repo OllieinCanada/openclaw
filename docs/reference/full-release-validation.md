@@ -269,21 +269,22 @@ aggregate `native-live-src-gateway-profiles-anthropic` or
 
 Use `rerun_group` to avoid repeating unrelated release boxes:
 
-| Handle              | Scope                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| `all`               | Phase-default stages; beta without soak excludes broad live/E2E and QA-live.                    |
-| `ci`                | Manual full CI child only.                                                                      |
-| `plugin-prerelease` | Plugin Prerelease child only.                                                                   |
-| `release-checks`    | All OpenClaw Release Checks stages.                                                             |
-| `install-smoke`     | Install Smoke through release checks.                                                           |
-| `cross-os`          | Cross-OS release checks.                                                                        |
-| `live-e2e`          | Repo/live E2E and Docker release-path validation.                                               |
-| `package`           | Package Acceptance.                                                                             |
-| `qa`                | QA parity plus QA live lanes.                                                                   |
-| `qa-parity`         | QA parity lanes and report only.                                                                |
-| `qa-live`           | QA live Matrix, Buzz, and Telegram plus gated Discord, WhatsApp, and Slack lanes when enabled.  |
-| `npm-telegram`      | Published-package Telegram E2E; requires `release_package_spec` or `npm_telegram_package_spec`. |
-| `performance`       | Product performance evidence only.                                                              |
+| Handle              | Scope                                                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `all`               | Phase-default stages; beta without soak excludes broad live/E2E and QA-live.                                          |
+| `ci`                | Manual full CI child only.                                                                                            |
+| `plugin-prerelease` | Plugin Prerelease child only.                                                                                         |
+| `release-checks`    | All OpenClaw Release Checks stages.                                                                                   |
+| `install-smoke`     | Install Smoke through release checks.                                                                                 |
+| `cross-os`          | Cross-OS release checks.                                                                                              |
+| `windows-node`      | Prepare the package candidate, then run stable and prerelease release-artifact E2E plus pinned-main Windows-node E2E. |
+| `live-e2e`          | Repo/live E2E and Docker release-path validation.                                                                     |
+| `package`           | Package Acceptance.                                                                                                   |
+| `qa`                | QA parity plus QA live lanes.                                                                                         |
+| `qa-parity`         | QA parity lanes and report only.                                                                                      |
+| `qa-live`           | QA live Matrix, Buzz, and Telegram plus gated Discord, WhatsApp, and Slack lanes when enabled.                        |
+| `npm-telegram`      | Published-package Telegram E2E; requires `release_package_spec` or `npm_telegram_package_spec`.                       |
+| `performance`       | Product performance evidence only.                                                                                    |
 
 Use `live_suite_filter` with `rerun_group=live-e2e` when one live suite failed.
 Valid filter ids are defined in the reusable live/E2E workflow, including
