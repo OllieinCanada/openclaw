@@ -217,7 +217,7 @@ export async function flowsShowCommand(
     } else {
       runtime.error(message);
     }
-    runtime.exit(1);
+    runtime.exit(1, opts.json ? { resetStream: process.stderr } : undefined);
     return;
   }
   const tasks = listTasksForFlowId(flow.flowId);
