@@ -420,7 +420,7 @@ function rawManifest({
   rerunGroup?: string;
   runId?: string;
   targetSha?: string;
-  version?: 2 | 3;
+  version?: 2 | 3 | 4;
   workflowFullRef?: string;
   workflowRefType?: "branch" | "tag";
   workflowSha?: string;
@@ -436,7 +436,7 @@ function rawManifest({
   targetRef?: string;
   targetSha: string;
   validationInputs: Record<string, string>;
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   workflowFullRef?: string;
   workflowName: string;
   workflowRef: string;
@@ -482,7 +482,7 @@ function rawManifest({
     workflowName: "Full Release Validation",
     workflowRef: "main",
     ...(workflowSha ? { workflowSha } : {}),
-    ...(version === 3
+    ...(version >= 3
       ? {
           workflowFullRef: workflowFullRef ?? "refs/heads/main",
           workflowRefType: workflowRefType ?? "branch",
@@ -500,7 +500,7 @@ function trustedMainPackageFixture({
   workflowRefType,
   workflowSha = "0".repeat(40),
 }: {
-  manifestVersion?: 2 | 3;
+  manifestVersion?: 2 | 3 | 4;
   parentPath?: string;
   targetSha?: string;
   workflowFullRef?: string;
@@ -1327,39 +1327,42 @@ describe("release CI summary child correlation", () => {
     },
   );
 
-  it("accepts SHA-pinned producer identity with exact-target evidence reuse", () => {
-    const workflowSha = "7".repeat(40);
-    const workflowRef = `release-ci/${workflowSha.slice(0, 12)}-1783705000000`;
-    const fixture = trustedMainPackageFixture({
-      manifestVersion: 3,
-      workflowFullRef: `refs/heads/${workflowRef}`,
-      workflowRef,
-      workflowSha,
-    });
-    fixture.manifest.targetRef = fixture.targetSha;
-    fixture.manifest.evidenceReuse = {
-      changedPaths: [],
-      evidenceSha: fixture.targetSha,
-      policy: "exact-target-full-validation-v1",
-      runId: "29071366024",
-      selectedRunId: "29071366024",
-    };
+  it.each([3, 4] as const)(
+    "accepts v%s SHA-pinned producer identity with exact-target evidence reuse",
+    (manifestVersion) => {
+      const workflowSha = "7".repeat(40);
+      const workflowRef = `release-ci/${workflowSha.slice(0, 12)}-1783705000000`;
+      const fixture = trustedMainPackageFixture({
+        manifestVersion,
+        workflowFullRef: `refs/heads/${workflowRef}`,
+        workflowRef,
+        workflowSha,
+      });
+      fixture.manifest.targetRef = fixture.targetSha;
+      fixture.manifest.evidenceReuse = {
+        changedPaths: [],
+        evidenceSha: fixture.targetSha,
+        policy: "exact-target-full-validation-v1",
+        runId: "29071366024",
+        selectedRunId: "29071366024",
+      };
 
-    expect(
-      validateTrustedProducerIdentity(
-        {
-          manifest: fixture.manifest,
-          parentRun: fixture.parentRun,
-        },
-        fixture.client,
-        { sourceSha: "c".repeat(40) },
-        "main",
-      ),
-    ).toMatchObject({
-      producerOnTrustedMainLineage: true,
-      workflowRefProof: "manifest-v3-sha-pinned-main-ancestry",
-    });
-  });
+      expect(
+        validateTrustedProducerIdentity(
+          {
+            manifest: fixture.manifest,
+            parentRun: fixture.parentRun,
+          },
+          fixture.client,
+          { sourceSha: "c".repeat(40) },
+          "main",
+        ),
+      ).toMatchObject({
+        producerOnTrustedMainLineage: true,
+        workflowRefProof: `manifest-v${manifestVersion}-sha-pinned-main-ancestry`,
+      });
+    },
+  );
 
   it("rejects a SHA-pinned evidenceReuse field even when false", () => {
     const workflowSha = "7".repeat(40);
@@ -1703,53 +1706,59 @@ describe("release CI summary child correlation", () => {
     expect(manifest.rerunGroup).toBe("all");
   });
 
-  it("binds v3 manifests to their immutable producer workflow SHA", () => {
-    const workflowSha = "b".repeat(40);
-    const manifest = validateParentManifest(rawManifest({ version: 3, workflowSha }), {
-      runAttempt: 2,
-      runId: "29090000000",
-      workflowRef: "main",
-      workflowSha,
-    });
-    expect(manifest).toMatchObject({
-      version: 3,
-      workflowSha,
-    });
-    expect(() =>
-      validateParentManifest(rawManifest({ version: 3, workflowSha }), {
+  it.each([3, 4] as const)(
+    "binds v%s manifests to their immutable producer workflow SHA",
+    (version) => {
+      const workflowSha = "b".repeat(40);
+      const manifest = validateParentManifest(rawManifest({ version, workflowSha }), {
         runAttempt: 2,
         runId: "29090000000",
-        workflowSha: "c".repeat(40),
-      }),
-    ).toThrow("release validation manifest workflow SHA mismatch");
-  });
-
-  it("requires v3 manifests to record artifact-only performance publication", () => {
-    const workflowSha = "b".repeat(40);
-    const missing = rawManifest({ version: 3, workflowSha });
-    delete (
-      missing.controls as {
-        performanceReportPublication?: string;
-      }
-    ).performanceReportPublication;
-    expect(() =>
-      validateParentManifest(missing, {
-        runAttempt: 2,
-        runId: "29090000000",
+        workflowRef: "main",
         workflowSha,
-      }),
-    ).toThrow("release validation manifest performance report publication mode is invalid");
-
-    const publishing = rawManifest({ version: 3, workflowSha });
-    publishing.controls.performanceReportPublication = "publish";
-    expect(() =>
-      validateParentManifest(publishing, {
-        runAttempt: 2,
-        runId: "29090000000",
+      });
+      expect(manifest).toMatchObject({
+        version,
         workflowSha,
-      }),
-    ).toThrow("release validation manifest performance report publication mode is invalid");
-  });
+      });
+      expect(() =>
+        validateParentManifest(rawManifest({ version, workflowSha }), {
+          runAttempt: 2,
+          runId: "29090000000",
+          workflowSha: "c".repeat(40),
+        }),
+      ).toThrow("release validation manifest workflow SHA mismatch");
+    },
+  );
+
+  it.each([3, 4] as const)(
+    "requires v%s manifests to record artifact-only performance publication",
+    (version) => {
+      const workflowSha = "b".repeat(40);
+      const missing = rawManifest({ version, workflowSha });
+      delete (
+        missing.controls as {
+          performanceReportPublication?: string;
+        }
+      ).performanceReportPublication;
+      expect(() =>
+        validateParentManifest(missing, {
+          runAttempt: 2,
+          runId: "29090000000",
+          workflowSha,
+        }),
+      ).toThrow("release validation manifest performance report publication mode is invalid");
+
+      const publishing = rawManifest({ version, workflowSha });
+      publishing.controls.performanceReportPublication = "publish";
+      expect(() =>
+        validateParentManifest(publishing, {
+          runAttempt: 2,
+          runId: "29090000000",
+          workflowSha,
+        }),
+      ).toThrow("release validation manifest performance report publication mode is invalid");
+    },
+  );
 
   it("requires a successful artifact-only performance guard for the current attempt", () => {
     const guard = {
