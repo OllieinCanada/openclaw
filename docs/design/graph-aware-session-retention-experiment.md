@@ -1,3 +1,11 @@
+---
+title: "Graph-aware session retention experiment"
+summary: "A measurement-only benchmark comparing session cleanup ordering policies."
+read_when:
+  - Evaluating changes to session cleanup ordering
+  - Reproducing the graph-aware retention benchmark
+---
+
 # Graph-aware session retention experiment
 
 ## Problem statement
@@ -128,11 +136,26 @@ All fixtures use production session writers against disposable SQLite stores cre
 Smoke uses about 100 groups, default about 1,000, and the opt-in large run about 10,000 across the
 five workloads. The large mode requires `OPENCLAW_SESSION_RETENTION_LARGE=1`.
 
+## Run the benchmark
+
+Run the supported package command from the repository root. Each mode writes a machine-readable
+report to `.artifacts/session-retention-analysis/<mode>.json` and exits nonzero if it observes a
+protected-group violation, ownership-group split, or store mutation.
+
+```bash
+pnpm sessions:retention:benchmark --mode smoke
+pnpm sessions:retention:benchmark --mode default
+OPENCLAW_SESSION_RETENTION_LARGE=1 pnpm sessions:retention:benchmark --mode large
+```
+
+Large mode is deliberately opt-in because it constructs about 10,000 groups through production
+storage APIs before running the read-only analysis.
+
 ## Default benchmark results
 
-The table is from Node 24.15.0. Each policy selects whole ownership groups until it meets the same
-per-workload target (25% of estimated eligible bytes). Runtime and heap measurements are
-observational, not CI thresholds.
+The table is from one representative Node 24.15.0 run. Each policy selects whole ownership groups
+until it meets the same per-workload target (25% of estimated eligible bytes). Runtime and heap
+measurements are observational, not CI thresholds, and are expected to vary in later proof artifacts.
 
 | Workload         | Policy               | Bytes selected | Value preserved | Runtime (ms) | Heap delta (bytes) |
 | ---------------- | -------------------- | -------------: | --------------: | -----------: | -----------------: |
@@ -167,17 +190,17 @@ allocation.
 
 ## Computer cost and large-run observations
 
-Default projection plus all five policy evaluations took 34–81 ms per workload. Positive
-post-analysis heap deltas were about 13.5–20.2 MB; garbage collection made one workload delta
-negative.
+Default projection plus all five policy evaluations completed in tens of milliseconds per workload.
+Positive post-analysis heap deltas were in the tens of megabytes; garbage collection made one
+workload delta negative.
 Each 200-group workload used four SQL queries, except generation chains (seven); mixed pressure
 projected 140 eligible groups from 220 sessions in four queries.
 
 The opt-in large run projected 9,400 eligible ownership groups, 12,200 sessions, and 37,409 bounded
-events across all workloads. Per-workload analysis took 0.31–0.83 seconds. The largest observed
-positive post-analysis heap delta was 54.3 MB for the mixed-pressure workload. Query counts remained
-bounded at 32–56 per workload. Fixture construction through production writers is intentionally
-excluded from analysis timing and was slower than the read-only analysis.
+events across all workloads. Per-workload analysis remained under one second, and the largest
+observed positive post-analysis heap delta remained under 60 MB. Query counts stayed bounded at
+32–56 per workload. Fixture construction through production writers is intentionally excluded from
+analysis timing and was slower than the read-only analysis.
 
 Large-run outcomes reproduced the direction of the default evidence: graph-aware preserved 589.2142
 versus 527.7995 for existing order on fork fan-out, 771.8542 versus 749.4733 on generation chains,
