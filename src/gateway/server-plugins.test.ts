@@ -59,9 +59,15 @@ vi.mock("../plugins/loader.js", () => ({
   loadOpenClawPlugins,
 }));
 
-vi.mock("../plugins/runtime/load-context.js", () => ({
-  createPluginRuntimeLoaderLogger: () => pluginRuntimeLoaderLogger,
-}));
+vi.mock("../plugins/runtime/load-context.js", async (importOriginal) => {
+  const { buildPluginRuntimeLoadOptions, setPluginRuntimeLoadContext } =
+    await importOriginal<typeof import("../plugins/runtime/load-context.js")>();
+  return {
+    buildPluginRuntimeLoadOptions,
+    setPluginRuntimeLoadContext,
+    createPluginRuntimeLoaderLogger: () => pluginRuntimeLoaderLogger,
+  };
+});
 
 vi.mock("../plugins/plugin-lookup-table.js", () => ({
   loadPluginLookUpTable,
@@ -2175,7 +2181,7 @@ describe("loadGatewayPlugins", () => {
     expect(getLastDispatchedClientInternal().delegatedToolPolicyHandoffId).toBeUndefined();
   });
 
-  test("forwards lightContext as lightweight bootstrap context on subagent run", async () => {
+  test("forwards bounded context options on subagent run", async () => {
     const serverPlugins = serverPluginsModule;
     const runtime = await createSubagentRuntime(serverPlugins);
     serverPlugins.setFallbackGatewayContext(createTestContext("light-context-forward"));
@@ -2184,6 +2190,7 @@ describe("loadGatewayPlugins", () => {
       sessionKey: "s-light-context",
       message: "hello",
       lightContext: true,
+      promptMode: "minimal",
       lane: "dreaming-narrative:s-light-context",
       deliver: false,
     });
@@ -2193,6 +2200,7 @@ describe("loadGatewayPlugins", () => {
     expect(params.message).toBe("hello");
     expect(params.lane).toBe("dreaming-narrative:s-light-context");
     expect(params.bootstrapContextMode).toBe("lightweight");
+    expect(params.promptMode).toBe("minimal");
     expect(params.deliver).toBe(false);
   });
 

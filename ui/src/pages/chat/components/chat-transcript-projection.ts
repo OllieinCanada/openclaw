@@ -2,6 +2,7 @@
 import { nothing, type TemplateResult } from "lit";
 import { classifySessionKind } from "../../../../../src/sessions/classify-session-kind.js";
 import { i18n, t } from "../../../i18n/index.ts";
+import { latestBrowserTabCards } from "../../../lib/chat/browser-tab-preview.ts";
 import type { ChatItem, MessageGroup } from "../../../lib/chat/chat-types.ts";
 import { extractTextCached } from "../../../lib/chat/message-extract.ts";
 import { normalizeMessage } from "../../../lib/chat/message-normalizer.ts";
@@ -52,8 +53,10 @@ import {
   getTranscriptState,
   type ChatThreadProps,
 } from "./chat-thread-interactions.ts";
+import { renderBrowserTabPreviews } from "./chat-tool-cards.ts";
 import { latestTranscriptAnnouncement } from "./chat-transcript-announcement.ts";
-import type { ChatTranscriptSession, TranscriptRow } from "./chat-transcript-controller.ts";
+import type { ChatTranscriptSession } from "./chat-transcript-controller.ts";
+import type { TranscriptRow } from "./chat-transcript-layout.ts";
 import {
   guardChatRenderItems,
   trackTranscriptRenderDependencies,
@@ -172,6 +175,7 @@ export function projectChatTranscript(
     searchOpen: state.searchOpen,
     searchQuery: state.searchQuery,
   });
+  const latestBrowserTabs = latestBrowserTabCards(props.messages, props.toolMessages);
   syncToolCardExpansionState(
     props.sessionKey,
     chatItems,
@@ -328,6 +332,7 @@ export function projectChatTranscript(
         : null;
     return {
       ...sharedMessageRenderOptions,
+      latestBrowserTabs,
       showReasoning,
       showToolCalls: props.showToolCalls,
       autoExpandToolCalls: Boolean(props.autoExpandToolCalls),
@@ -427,7 +432,7 @@ export function projectChatTranscript(
       return renderStreamGroup(item.parts, {
         ...streamGroupOptions,
         questionPrompts,
-        startupPhase: props.startupStatus?.phase,
+        startupLabel: props.startupLabel,
         waitingApproval: props.waitingApproval,
         runOutputTokens: props.runOutputTokens,
       });
@@ -436,6 +441,10 @@ export function projectChatTranscript(
       const workExpanded = expandedToolCards.get(item.key) ?? false;
       return renderWorkGroupSummary(item, {
         expanded: workExpanded,
+        browserTabPreviews: renderBrowserTabPreviews(item.groups, {
+          sessionKey: props.sessionKey,
+          latestBrowserTabs,
+        }),
         onToggle: () => {
           setExpansionState(expandedToolCards, item.key, !workExpanded);
           requestUpdate();
@@ -458,7 +467,7 @@ export function projectChatTranscript(
         streamOptions: {
           ...streamGroupOptions,
           questionPrompts,
-          startupPhase: props.startupStatus?.phase,
+          startupLabel: props.startupLabel,
           waitingApproval: props.waitingApproval,
           runOutputTokens: props.runOutputTokens,
         },
@@ -528,7 +537,7 @@ export function projectChatTranscript(
       parts: activeStatusParts,
       options: {
         ...streamGroupOptions,
-        startupPhase: props.startupStatus?.phase,
+        startupLabel: props.startupLabel,
         waitingApproval: props.waitingApproval,
         runOutputTokens: props.runOutputTokens,
       },
@@ -635,6 +644,7 @@ export function projectChatTranscript(
     // The host minute poll requests an update; this key crosses row guard() memoization.
     Math.floor(Date.now() / 60_000),
     getToolTitlesVersion(),
+    JSON.stringify([...latestBrowserTabs]),
     props.sessionKey,
     props.boardProvider,
     props.boardProvider?.canPinWidgets,
@@ -646,7 +656,7 @@ export function projectChatTranscript(
     props.showToolCalls,
     Boolean(props.runActive),
     Boolean(props.runWorking),
-    props.startupStatus?.phase,
+    props.startupLabel,
     Boolean(props.waitingApproval),
     props.questionPrompts,
     Boolean(props.autoExpandToolCalls),

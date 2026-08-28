@@ -80,12 +80,10 @@ import {
 import { runWithScopedSessionAccess } from "./scoped-session-access.js";
 import {
   createSessionVisibilityRowChecker,
-  createAgentToAgentPolicy,
   formatSessionToolAccessDenial,
   isExpectedSessionLookupMiss,
   recordSessionToolActionFact,
   resolveDisplaySessionKey,
-  resolveEffectiveSessionToolsVisibility,
   resolveSessionReference,
   resolveSessionToolAccess,
   resolveSessionToolContext,
@@ -110,12 +108,13 @@ function recordSessionsSendParticipant(params: {
   requesterAgentId: string;
   sessionKey: string;
   targetAgentId: string;
+  promptedAt: number;
 }): void {
   recordSessionParticipantBestEffort({
-    actor: { type: "agent", id: params.requesterAgentId },
+    identity: { type: "agent", id: params.requesterAgentId },
+    promptedAt: params.promptedAt,
     agentId: params.targetAgentId,
     sessionKey: params.sessionKey,
-    source: "agent",
     storePath: resolveSessionStorePathCore(params.cfg.session?.store, {
       agentId: params.targetAgentId,
     }),
@@ -505,12 +504,21 @@ export function createSessionsSendTool(opts?: {
     outputSchema: SessionsSendOutputSchema,
     prepareArguments: normalizeSessionsSendArguments,
     execute: async (_toolCallId, args) => {
+      const promptedAt = Date.now();
       const params = normalizeSessionsSendArguments(args);
       const gatewayCall = opts?.callGateway ?? callAgentToolGatewayRequest;
       const message = readToolStringParam(params, "message", { required: true });
       const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
-      const { cfg, mainKey, alias, effectiveRequesterKey, mainSessionKey, restrictToSpawned } =
-        resolveSessionToolContext(opts);
+      const {
+        cfg,
+        mainKey,
+        alias,
+        effectiveRequesterKey,
+        mainSessionKey,
+        restrictToSpawned,
+        sessionVisibility,
+        a2aPolicy,
+      } = resolveSessionToolContext(opts);
       let requesterAgentId: string;
       try {
         requesterAgentId = resolveSessionAgentId({
@@ -525,12 +533,6 @@ export function createSessionsSendTool(opts?: {
           error: formatErrorMessage(err),
         });
       }
-
-      const a2aPolicy = createAgentToAgentPolicy(cfg);
-      const sessionVisibility = resolveEffectiveSessionToolsVisibility({
-        cfg,
-        sandboxed: opts?.sandboxed === true,
-      });
 
       const sessionKeyParam = readToolStringParam(params, "sessionKey");
       const labelParam = normalizeOptionalString(readToolStringParam(params, "label"));
@@ -1161,6 +1163,7 @@ export function createSessionsSendTool(opts?: {
               targetSessionKey: start.a2aSessionKey ?? resolvedKey,
             });
             recordSessionsSendParticipant({
+              promptedAt,
               cfg,
               requesterAgentId,
               sessionKey: start.a2aSessionKey ?? resolvedKey,
@@ -1197,6 +1200,7 @@ export function createSessionsSendTool(opts?: {
             targetSessionKey: start.a2aSessionKey ?? resolvedKey,
           });
           recordSessionsSendParticipant({
+            promptedAt,
             cfg,
             requesterAgentId,
             sessionKey: start.a2aSessionKey ?? resolvedKey,

@@ -54,6 +54,7 @@ export async function recoverEmbeddedRunOverflow(
     toolResultPromptProjectionState: ToolResultPromptProjectionState;
     attemptCompactionCount: number;
     prepareCurrentTranscriptRetry: () => void;
+    markOwnedTranscriptRetry: () => void;
   },
 ): Promise<EmbeddedRunOverflowRecoveryOutcome> {
   const contextOverflowError =
@@ -93,9 +94,9 @@ export async function recoverEmbeddedRunOverflow(
     return { action: "none" };
   }
 
+  const terminal = projectAgentRunAttemptTerminal(input.attempt.terminal);
   const providerPromptRejection =
-    contextOverflowError.source === "assistantError" ||
-    projectAgentRunAttemptTerminal(input.attempt.terminal).promptErrorSource === "prompt"
+    contextOverflowError.source === "assistantError" || terminal.promptErrorSource === "prompt"
       ? markLastProviderPromptContextRejected(getProviderPromptState(input.runParams.runId))
       : undefined;
 
@@ -104,6 +105,14 @@ export async function recoverEmbeddedRunOverflow(
   const errorText = contextOverflowError.text;
   const observedOverflowTokens = extractObservedOverflowTokenCount(errorText);
   const preflightRecovery = input.attempt.preflightRecovery;
+  const preflightPromptBudget =
+    terminal.promptErrorSource === "precheck" &&
+    preflightRecovery?.source === "mid-turn" &&
+    typeof preflightRecovery.promptBudgetBeforeReserve === "number" &&
+    Number.isFinite(preflightRecovery.promptBudgetBeforeReserve) &&
+    preflightRecovery.promptBudgetBeforeReserve > 0
+      ? Math.floor(preflightRecovery.promptBudgetBeforeReserve)
+      : undefined;
   const preflightEstimatedPromptTokens =
     typeof preflightRecovery?.estimatedPromptTokens === "number" &&
     Number.isFinite(preflightRecovery.estimatedPromptTokens) &&
@@ -138,6 +147,7 @@ export async function recoverEmbeddedRunOverflow(
     input.attemptCompactionCount > 0 &&
     input.state.overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
   ) {
+    input.markOwnedTranscriptRetry();
     input.state.overflowCompactionAttempts += 1;
     log.warn(
       `context overflow persisted after in-attempt compaction (attempt ${input.state.overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); retrying prompt without additional compaction for ${input.provider}/${input.modelId}`,
@@ -169,7 +179,7 @@ export async function recoverEmbeddedRunOverflow(
     await input.runOwnsCompactionBeforeHook("overflow recovery");
     try {
       const compaction = await compactEmbeddedRunForRecovery(input, {
-        tokenBudget: input.contextTokenBudget,
+        tokenBudget: preflightPromptBudget ?? input.contextTokenBudget,
         trigger: "overflow",
         diagId: overflowDiagId,
         attempt: input.state.overflowCompactionAttempts,
@@ -286,6 +296,7 @@ export async function recoverEmbeddedRunOverflow(
         log.info(
           `auto-compaction succeeded for ${input.provider}/${input.modelId}; retrying prompt`,
         );
+        input.markOwnedTranscriptRetry();
         if (preflightRecovery?.source === "mid-turn") {
           input.prepareCurrentTranscriptRetry();
         } else {
@@ -333,6 +344,7 @@ export async function recoverEmbeddedRunOverflow(
         projectionState: input.toolResultPromptProjectionState,
       });
       if (truncResult.truncated) {
+        input.markOwnedTranscriptRetry();
         log.info(
           `[context-overflow-recovery] Truncated ${truncResult.truncatedCount} tool result(s); retrying prompt`,
         );

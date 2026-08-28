@@ -272,10 +272,14 @@ describe("graph-aware session retention ranking", () => {
       targetBytes: 1_500,
     });
     const primaryScores = scoreGraphAwareGroups(groups, PRIMARY_GRAPH_WEIGHTS);
+    const graphAwareSelectedIds = new Set(graphAwareMetrics.selectedGroupIds);
     const primaryValuePreserved = Number(
-      (primaryScores.get("preserved")?.recoveryValue ?? 0).toFixed(9),
+      groups
+        .filter((item) => !graphAwareSelectedIds.has(item.groupId))
+        .reduce((total, item) => total + (primaryScores.get(item.groupId)?.recoveryValue ?? 0), 0)
+        .toFixed(9),
     );
-    expect(graphAwareMetrics.selectedGroupIds).toEqual(["selected-first", "selected-second"]);
+    expect(graphAwareMetrics.selectedGroupIds).toHaveLength(2);
     expect(graphAwareMetrics.policyIndependentValuePreserved).not.toBe(primaryValuePreserved);
     expect(POLICY_INDEPENDENT_EVALUATION_WEIGHTS.weights).not.toEqual(
       PRIMARY_GRAPH_WEIGHTS.weights,

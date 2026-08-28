@@ -10,6 +10,7 @@ import {
   buildAgentRunTerminalOutcomeFromLifecycleEvent,
   classifyAgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
+import { isActiveEmbeddedRunId } from "../agents/embedded-agent-runner/runs.js";
 import { isTimeoutError, resolveFailoverReasonFromError } from "../agents/failover-error.js";
 import type { FailoverReason } from "../agents/failover/signal.js";
 import { resolveToolSearchCodeDisplayTarget } from "../agents/tool-display-common.js";
@@ -93,6 +94,9 @@ const RESTART_RECOVERY_LIFECYCLE_PHASES = new Set(["start", "end", "error"]);
 function readChatRunStartupPhase(value: unknown): ChatRunStartupPhase | undefined {
   switch (value) {
     case "preparing_workspace":
+    case "naming_worktree":
+    case "creating_worktree":
+    case "running_setup":
     case "provisioning_environment":
     case "preparing_context":
     case "starting_model":
@@ -346,10 +350,11 @@ export type AgentEventHandlerOptions = {
     clientRunId: string;
     sessionKey: string;
   }) => void;
-  markTrackedRunTerminalPersisted?: (params: {
+  settleTrackedTerminal?: (params: {
     runId: string;
     clientRunId: string;
     sessionKey: string;
+    persisted?: boolean;
   }) => void;
   trackTrackedRunTerminalPersistence?: (params: {
     runId: string;
@@ -448,7 +453,7 @@ export function createAgentEventHandler({
   lifecycleErrorRetryGraceMs = AGENT_LIFECYCLE_ERROR_RETRY_GRACE_MS,
   isChatSendRunActive = () => false,
   clearTrackedActiveRun,
-  markTrackedRunTerminalPersisted,
+  settleTrackedTerminal,
   trackTrackedRunTerminalPersistence,
   resolveActiveLifecycleGenerationForRun = () => undefined,
   updateRunToolErrorSummary,
@@ -831,18 +836,15 @@ export function createAgentEventHandler({
             { dropIfSlow: true },
           );
         };
-        const markPersisted = () => {
-          markTrackedRunTerminalPersisted?.({
-            runId: evt.runId,
-            clientRunId,
-            sessionKey,
-          });
-        };
         // Terminal writes serialize with restart markers. Reload only after the
         // write so subscribers see the canonical post-race session state.
         void persistence
           .then(() => {
-            markPersisted();
+            settleTrackedTerminal?.({
+              runId: evt.runId,
+              clientRunId,
+              sessionKey,
+            });
             broadcastSessionChange();
           })
           .catch((err: unknown) => {
@@ -851,8 +853,21 @@ export function createAgentEventHandler({
             );
             // Persistence recovery remains tracked by the controller entry, but
             // subscribers still need a terminal projection instead of hanging.
+            settleTrackedTerminal?.({
+              runId: evt.runId,
+              clientRunId,
+              sessionKey,
+              persisted: false,
+            });
             broadcastSessionChange(evt);
           });
+      } else {
+        settleTrackedTerminal?.({
+          runId: evt.runId,
+          clientRunId,
+          sessionKey,
+          persisted: false,
+        });
       }
     }
   };
@@ -1312,6 +1327,9 @@ export function createAgentEventHandler({
     const isAborted =
       isChatAbortMarkerCurrent(chatRunState.runs.get(clientRunId)?.abortMarker, chatLink) ||
       isChatAbortMarkerCurrent(chatRunState.runs.get(evt.runId)?.abortMarker, chatLink);
+    const recordsEmbeddedProgress = !chatLink && isActiveEmbeddedRunId(evt.runId);
+    const recordsInFlightProgress =
+      (Boolean(chatLink) && isControlUiVisible) || recordsEmbeddedProgress;
 
     const restartRecoveryState = restartRecoverySessionKey
       ? resolveRestartRecoveryLifecycleState(restartRecoverySessionKey, restartRecoveryAgentId, evt)
@@ -1414,8 +1432,7 @@ export function createAgentEventHandler({
       };
     }
     if (
-      chatLink &&
-      isControlUiVisible &&
+      recordsInFlightProgress &&
       !isAborted &&
       ((isToolEvent && !suppressHeartbeatToolEvents) ||
         isItemEvent ||
@@ -1429,7 +1446,11 @@ export function createAgentEventHandler({
       // Persist the client-facing identity after run/session remapping. Route
       // changes discard transient UI rows, so history replay must use the same
       // payload identity as live delivery or tool results cannot reconcile.
-      chatRunState.recordProgressEvent(clientRunId, agentPayload);
+      chatRunState.recordProgressEvent(
+        clientRunId,
+        agentPayload,
+        recordsEmbeddedProgress ? "summary" : "full",
+      );
     }
     if (evt.stream === "run_status") {
       const phase = readChatRunStartupPhase(evt.data?.phase);
