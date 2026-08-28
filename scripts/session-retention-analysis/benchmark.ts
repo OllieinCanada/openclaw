@@ -17,7 +17,11 @@ import {
   PRIMARY_GRAPH_WEIGHTS,
   type RetentionPolicyName,
 } from "./graph-aware-ranking.js";
-import { evaluateRetentionPolicy, type RetentionPolicyMetrics } from "./metrics.js";
+import {
+  evaluateRetentionPolicy,
+  POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
+  type RetentionPolicyMetrics,
+} from "./metrics.js";
 import {
   buildRetentionOwnershipGroups,
   projectSessionRetentionGroups,
@@ -68,7 +72,8 @@ export type RetentionBenchmarkReport = {
   mode: BenchmarkMode;
   groupsPerWorkload: number;
   policyNames: RetentionPolicyName[];
-  weightSets: [typeof PRIMARY_GRAPH_WEIGHTS, typeof BALANCED_GRAPH_WEIGHTS];
+  rankingWeightSets: [typeof PRIMARY_GRAPH_WEIGHTS, typeof BALANCED_GRAPH_WEIGHTS];
+  evaluationWeightSet: typeof POLICY_INDEPENDENT_EVALUATION_WEIGHTS;
   workloads: WorkloadBenchmarkResult[];
   invariants: {
     protectedGroupViolations: number;
@@ -237,7 +242,7 @@ function printComparisonTable(report: RetentionBenchmarkReport): void {
     "Workload".padEnd(24),
     "Policy".padEnd(25),
     "Bytes selected".padStart(14),
-    "Value preserved".padStart(15),
+    "Independent value".padStart(17),
     "Runtime ms".padStart(10),
     "Heap delta".padStart(12),
   ].join("  ");
@@ -249,7 +254,7 @@ function printComparisonTable(report: RetentionBenchmarkReport): void {
           workload.workload.padEnd(24),
           policy.policy.padEnd(25),
           String(policy.actualBytesSelected).padStart(14),
-          policy.estimatedRecoveryValuePreserved.toFixed(4).padStart(15),
+          policy.policyIndependentValuePreserved.toFixed(4).padStart(17),
           policy.runtimeMs.toFixed(3).padStart(10),
           String(policy.heapDeltaBytes).padStart(12),
         ].join("  "),
@@ -280,7 +285,8 @@ export async function runRetentionBenchmark(params: {
     mode: params.mode,
     groupsPerWorkload,
     policyNames: POLICIES,
-    weightSets: [PRIMARY_GRAPH_WEIGHTS, BALANCED_GRAPH_WEIGHTS],
+    rankingWeightSets: [PRIMARY_GRAPH_WEIGHTS, BALANCED_GRAPH_WEIGHTS],
+    evaluationWeightSet: POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
     workloads,
     invariants: {
       protectedGroupViolations: workloads.reduce(

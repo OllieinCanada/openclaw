@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  BALANCED_GRAPH_WEIGHTS,
+  PRIMARY_GRAPH_WEIGHTS,
   rankRetentionGroups,
   rankRetentionGroupsForRecovery,
   scoreGraphAwareGroups,
   type SessionRetentionGroup,
 } from "../../scripts/session-retention-analysis/graph-aware-ranking.js";
-import { evaluateRetentionPolicy } from "../../scripts/session-retention-analysis/metrics.js";
+import {
+  evaluateRetentionPolicy,
+  POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
+} from "../../scripts/session-retention-analysis/metrics.js";
 
 function group(
   groupId: string,
@@ -208,6 +213,75 @@ describe("graph-aware session retention ranking", () => {
       recovery
         .map((ranked) => ranked.score.recoveryPriority)
         .toSorted((left, right) => right - left),
+    );
+  });
+
+  it("evaluates every policy with weights that are held out from graph-aware ranking", () => {
+    const groups = [
+      group("selected-first", {
+        existingOrder: 0,
+        updatedAt: 1,
+        lastActivityAt: 1,
+        lastInteractionAt: 1,
+        lastReadAt: 1,
+      }),
+      group("selected-second", {
+        existingOrder: 1,
+        childGroupIds: ["preserved"],
+        directChildCount: 1,
+        descendantCount: 1,
+        forkFanout: 1,
+      }),
+      group("preserved", {
+        existingOrder: 2,
+        updatedAt: 1_000,
+        lastActivityAt: 1_000,
+        lastInteractionAt: 1_000,
+        lastReadAt: 1_000,
+        transcriptEventCount: 100,
+        parentLinkedEventCount: 50,
+      }),
+    ];
+    const evaluationScores = scoreGraphAwareGroups(groups, POLICY_INDEPENDENT_EVALUATION_WEIGHTS);
+
+    for (const policy of [
+      "existing-order",
+      "least-recently-active",
+      "size-first",
+      "graph-aware",
+      "graph-aware-balanced",
+    ] as const) {
+      const metrics = evaluateRetentionPolicy({ groups, policy, targetBytes: 1_500 });
+      const selectedIds = new Set(metrics.selectedGroupIds);
+      const expected = Number(
+        groups
+          .filter((item) => !selectedIds.has(item.groupId))
+          .reduce(
+            (total, item) => total + (evaluationScores.get(item.groupId)?.recoveryValue ?? 0),
+            0,
+          )
+          .toFixed(9),
+      );
+
+      expect(metrics.policyIndependentValuePreserved).toBe(expected);
+    }
+
+    const graphAwareMetrics = evaluateRetentionPolicy({
+      groups,
+      policy: "graph-aware",
+      targetBytes: 1_500,
+    });
+    const primaryScores = scoreGraphAwareGroups(groups, PRIMARY_GRAPH_WEIGHTS);
+    const primaryValuePreserved = Number(
+      (primaryScores.get("preserved")?.recoveryValue ?? 0).toFixed(9),
+    );
+    expect(graphAwareMetrics.selectedGroupIds).toEqual(["selected-first", "selected-second"]);
+    expect(graphAwareMetrics.policyIndependentValuePreserved).not.toBe(primaryValuePreserved);
+    expect(POLICY_INDEPENDENT_EVALUATION_WEIGHTS.weights).not.toEqual(
+      PRIMARY_GRAPH_WEIGHTS.weights,
+    );
+    expect(POLICY_INDEPENDENT_EVALUATION_WEIGHTS.weights).not.toEqual(
+      BALANCED_GRAPH_WEIGHTS.weights,
     );
   });
 

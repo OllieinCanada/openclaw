@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
 import { runRetentionBenchmark } from "../../scripts/session-retention-analysis/benchmark.js";
+import {
+  BALANCED_GRAPH_WEIGHTS,
+  PRIMARY_GRAPH_WEIGHTS,
+} from "../../scripts/session-retention-analysis/graph-aware-ranking.js";
+import { POLICY_INDEPENDENT_EVALUATION_WEIGHTS } from "../../scripts/session-retention-analysis/metrics.js";
 
 function deterministicMetrics(report: Awaited<ReturnType<typeof runRetentionBenchmark>>) {
   return report.workloads.map((workload) => ({
@@ -29,6 +34,10 @@ it("runs every temporary-store workload without mutations, splits, or protection
   expect(report.workloads.every((workload) => workload.invariants.isolatedStateDirectory)).toBe(
     true,
   );
+  expect(report.rankingWeightSets).toEqual([PRIMARY_GRAPH_WEIGHTS, BALANCED_GRAPH_WEIGHTS]);
+  expect(report.evaluationWeightSet).toEqual(POLICY_INDEPENDENT_EVALUATION_WEIGHTS);
+  expect(report.evaluationWeightSet.weights).not.toEqual(PRIMARY_GRAPH_WEIGHTS.weights);
+  expect(report.evaluationWeightSet.weights).not.toEqual(BALANCED_GRAPH_WEIGHTS.weights);
   expect(JSON.stringify(report)).not.toMatch(/[A-Z]:\\Users\\/u);
 });
 

@@ -1,14 +1,27 @@
 import {
-  PRIMARY_GRAPH_WEIGHTS,
   rankRetentionGroups,
   rankRetentionGroupsForRecovery,
   scoreGraphAwareGroups,
+  type GraphAwareWeightSet,
   selectGroupsToByteTarget,
   type RetentionPolicyName,
   type SessionRetentionGroup,
 } from "./graph-aware-ranking.js";
 
-export type RecoveryCurve = {
+export const POLICY_INDEPENDENT_EVALUATION_WEIGHTS: GraphAwareWeightSet = {
+  name: "uniform-policy-independent-v1",
+  weights: {
+    activityRecency: 1 / 7,
+    accessRecency: 1 / 7,
+    lineageCentrality: 1 / 7,
+    directFanout: 1 / 7,
+    descendantReach: 1 / 7,
+    generationContinuity: 1 / 7,
+    transcriptEvidence: 1 / 7,
+  },
+};
+
+export type EvaluationValueCurve = {
   first10Percent: number;
   first25Percent: number;
   first50Percent: number;
@@ -20,10 +33,10 @@ export type RetentionPolicyMetrics = {
   actualBytesSelected: number;
   ownershipGroupsSelected: number;
   sessionsSelected: number;
-  estimatedRecoveryValuePreserved: number;
-  dependencyWeightedValuePreserved: number;
-  highValueGroupsPreserved: number;
-  recoveryValueByCost: RecoveryCurve;
+  policyIndependentValuePreserved: number;
+  policyIndependentDependencyWeightedValuePreserved: number;
+  policyIndependentHighValueGroupsPreserved: number;
+  policyIndependentValueByCost: EvaluationValueCurve;
   protectedGroupViolations: number;
   ownershipGroupSplits: number;
   selectedGroupIds: string[];
@@ -35,10 +48,10 @@ function roundMetric(value: number): number {
   return Number.isFinite(value) ? Number(value.toFixed(METRIC_PRECISION)) : 0;
 }
 
-function recoveryCurve(groups: readonly SessionRetentionGroup[]): RecoveryCurve {
+function evaluationValueCurve(groups: readonly SessionRetentionGroup[]): EvaluationValueCurve {
   const ranking = rankRetentionGroupsForRecovery({
     groups,
-    weightSet: PRIMARY_GRAPH_WEIGHTS,
+    weightSet: POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
   });
   const totalCost = ranking.reduce(
     (total, ranked) => total + ranked.score.estimatedRecoveryCost,
@@ -73,18 +86,21 @@ export function evaluateRetentionPolicy(params: {
   const ranking = rankRetentionGroups({ groups: params.groups, policy: params.policy });
   const selected = selectGroupsToByteTarget(ranking, params.targetBytes);
   const selectedGroupIds = new Set(selected.map((ranked) => ranked.group.groupId));
-  const primaryScores = scoreGraphAwareGroups(params.groups, PRIMARY_GRAPH_WEIGHTS);
+  const evaluationScores = scoreGraphAwareGroups(
+    params.groups,
+    POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
+  );
   const availableGroups = params.groups.filter((group) => !group.protected);
-  const totalRecoveryValue = availableGroups.reduce(
-    (total, group) => total + (primaryScores.get(group.groupId)?.recoveryValue ?? 0),
+  const totalEvaluationValue = availableGroups.reduce(
+    (total, group) => total + (evaluationScores.get(group.groupId)?.recoveryValue ?? 0),
     0,
   );
-  const selectedRecoveryValue = selected.reduce(
-    (total, ranked) => total + (primaryScores.get(ranked.group.groupId)?.recoveryValue ?? 0),
+  const selectedEvaluationValue = selected.reduce(
+    (total, ranked) => total + (evaluationScores.get(ranked.group.groupId)?.recoveryValue ?? 0),
     0,
   );
   const dependencyWeighted = (group: SessionRetentionGroup): number => {
-    const score = primaryScores.get(group.groupId)?.recoveryValue ?? 0;
+    const score = evaluationScores.get(group.groupId)?.recoveryValue ?? 0;
     return score * (1 + Math.log1p(group.descendantCount + group.forkFanout));
   };
   const totalDependencyWeightedValue = availableGroups.reduce(
@@ -99,8 +115,8 @@ export function evaluateRetentionPolicy(params: {
   const highValueGroups = availableGroups
     .toSorted(
       (left, right) =>
-        (primaryScores.get(right.groupId)?.recoveryValue ?? 0) -
-          (primaryScores.get(left.groupId)?.recoveryValue ?? 0) ||
+        (evaluationScores.get(right.groupId)?.recoveryValue ?? 0) -
+          (evaluationScores.get(left.groupId)?.recoveryValue ?? 0) ||
         left.groupId.localeCompare(right.groupId),
     )
     .slice(0, highValueCount);
@@ -117,14 +133,14 @@ export function evaluateRetentionPolicy(params: {
     ),
     ownershipGroupsSelected: selected.length,
     sessionsSelected: selected.reduce((total, ranked) => total + ranked.group.sessionIds.length, 0),
-    estimatedRecoveryValuePreserved: roundMetric(totalRecoveryValue - selectedRecoveryValue),
-    dependencyWeightedValuePreserved: roundMetric(
+    policyIndependentValuePreserved: roundMetric(totalEvaluationValue - selectedEvaluationValue),
+    policyIndependentDependencyWeightedValuePreserved: roundMetric(
       totalDependencyWeightedValue - selectedDependencyWeightedValue,
     ),
-    highValueGroupsPreserved: highValueGroups.filter(
+    policyIndependentHighValueGroupsPreserved: highValueGroups.filter(
       (group) => !selectedGroupIds.has(group.groupId),
     ).length,
-    recoveryValueByCost: recoveryCurve(params.groups),
+    policyIndependentValueByCost: evaluationValueCurve(params.groups),
     protectedGroupViolations,
     ownershipGroupSplits: 0,
     selectedGroupIds: [...selectedGroupIds],
