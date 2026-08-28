@@ -11,7 +11,7 @@ import {
   type OpenClawAgentDatabase,
 } from "../../src/state/openclaw-agent-db.js";
 
-export const RETENTION_FIXTURE_VERSION = "graph-retention-fixtures-v1";
+export const RETENTION_FIXTURE_VERSION = "graph-retention-fixtures-v2";
 
 export const WORKLOAD_NAMES = [
   "isolated-stale-bulk",
@@ -29,6 +29,10 @@ export type WorkloadFixtureSummary = {
   sessionEntriesCreated: number;
   transcriptEventsCreated: number;
   protectedSessionKeys: string[];
+  activeSession: {
+    sessionKey: string;
+    sessionIds: string[];
+  };
 };
 
 type FixtureWriter = {
@@ -109,12 +113,14 @@ function writeGroup(
 ): {
   sessionKey: string;
   currentSessionId: string;
+  sessionIds: string[];
 } {
   const suffix = options.keySuffix ?? String(options.index).padStart(6, "0");
   const sessionKey = fixtureKey(writer, suffix);
   const generations = Math.max(1, options.generations ?? 1);
   let previousSessionId: string | undefined;
   let currentSessionId = "";
+  const sessionIds: string[] = [];
   for (let generation = 0; generation < generations; generation += 1) {
     const sessionId = fixtureSessionId(writer, suffix, generation);
     const staleUpdatedAt = STALE_EPOCH_MS + options.index * 10_000 + generation;
@@ -144,12 +150,13 @@ function writeGroup(
     });
     previousSessionId = sessionId;
     currentSessionId = sessionId;
+    sessionIds.push(sessionId);
   }
   writer.sessionEntriesCreated += 1;
   if (options.pinned || options.recent) {
     writer.protectedSessionKeys.add(sessionKey);
   }
-  return { sessionKey, currentSessionId };
+  return { sessionKey, currentSessionId, sessionIds };
 }
 
 function populateIsolated(writer: FixtureWriter, groupCount: number): void {
@@ -330,6 +337,25 @@ function populateMixedPressure(writer: FixtureWriter, groupCount: number): void 
   }
 }
 
+function writeActiveSession(
+  writer: FixtureWriter,
+  index: number,
+): {
+  sessionKey: string;
+  sessionIds: string[];
+} {
+  const activeSession = writeGroup(writer, {
+    index,
+    keySuffix: "protected-active-session",
+    contentBytes: 128,
+  });
+  writer.protectedSessionKeys.add(activeSession.sessionKey);
+  return {
+    sessionKey: activeSession.sessionKey,
+    sessionIds: activeSession.sessionIds,
+  };
+}
+
 export function populateRetentionWorkload(params: {
   storePath: string;
   workload: RetentionWorkloadName;
@@ -358,6 +384,7 @@ export function populateRetentionWorkload(params: {
     } else {
       populateMixedPressure(writer, groupCount);
     }
+    const activeSession = writeActiveSession(writer, groupCount + 1);
     summary = {
       name: params.workload,
       requestedGroups: groupCount,
@@ -366,6 +393,7 @@ export function populateRetentionWorkload(params: {
       protectedSessionKeys: [...writer.protectedSessionKeys].toSorted((left, right) =>
         left.localeCompare(right),
       ),
+      activeSession,
     };
   }, toDatabaseOptions(resolved));
   if (!summary) {

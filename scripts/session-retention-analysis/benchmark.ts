@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
+import { readExactSessionEntryRow } from "../../src/config/sessions/session-accessor.sqlite-entry-store.js";
+import { collectSessionStateIdsForEntry } from "../../src/config/sessions/session-accessor.sqlite-lifecycle-state.js";
+import type { SessionEntryMaintenancePlan } from "../../src/config/sessions/session-accessor.sqlite-lifecycle-types.js";
 import { applySessionEntryMaintenance } from "../../src/config/sessions/session-accessor.sqlite-maintenance.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../src/config/sessions/session-sqlite-target.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../src/state/openclaw-agent-db-readonly.js";
@@ -50,6 +53,8 @@ type WorkloadBenchmarkResult = {
     sessionEntries: number;
     transcriptEvents: number;
     sqlQueries: number;
+    activeSessionFixtures: number;
+    activeSessionControlCandidates: number;
   };
   analysisRuntimeMs: number;
   heapBeforeBytes: number;
@@ -57,6 +62,8 @@ type WorkloadBenchmarkResult = {
   heapDeltaBytes: number;
   policies: TimedPolicyMetrics[];
   invariants: {
+    activeSessionPlanViolations: number;
+    activeSessionRankingViolations: number;
     protectedGroupViolations: number;
     ownershipGroupSplits: number;
     actualMutations: number;
@@ -75,6 +82,8 @@ export type RetentionBenchmarkReport = {
   evaluationWeightSet: typeof POLICY_INDEPENDENT_EVALUATION_WEIGHTS;
   workloads: WorkloadBenchmarkResult[];
   invariants: {
+    activeSessionPlanViolations: number;
+    activeSessionRankingViolations: number;
     protectedGroupViolations: number;
     ownershipGroupSplits: number;
     actualMutations: number;
@@ -95,6 +104,9 @@ const GROUPS_PER_WORKLOAD: Record<BenchmarkMode, number> = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const PRUNE_AFTER_MS = 365 * DAY_MS;
+const PRESERVE_RECENT_MS = 7 * DAY_MS;
+const RETENTION_CONTROL_SESSION_KEY = "agent:main:retention-active-control";
 
 function repositoryCommit(): string {
   return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -119,6 +131,28 @@ function readFingerprintReadOnly(target: { agentId: string; path: string }): str
   return opened.value;
 }
 
+function maintenancePlanContainsSessionIdentity(params: {
+  plan: Pick<SessionEntryMaintenancePlan, "entryRemovals" | "stateDeletePlans">;
+  sessionKey: string;
+  sessionIds: ReadonlySet<string>;
+}): boolean {
+  return (
+    params.plan.entryRemovals.some(
+      (removal) =>
+        removal.sessionKey === params.sessionKey ||
+        (removal.expectedEntry !== undefined &&
+          collectSessionStateIdsForEntry(removal.expectedEntry).some((sessionId) =>
+            params.sessionIds.has(sessionId),
+          )),
+    ) ||
+    params.plan.stateDeletePlans.some(
+      (statePlan) =>
+        statePlan.snapshot.sessionKey === params.sessionKey ||
+        params.sessionIds.has(statePlan.sessionId),
+    )
+  );
+}
+
 async function benchmarkWorkload(params: {
   workload: RetentionWorkloadName;
   groupsPerWorkload: number;
@@ -136,23 +170,60 @@ async function benchmarkWorkload(params: {
     const database = openOpenClawAgentDatabase(target);
     database.walMaintenance.checkpoint();
     const fingerprintBefore = readSessionStoreFingerprint(database);
-    const plan = applySessionEntryMaintenance(database, {
-      activeSessionKey: "agent:main:main",
-      archiveDirectory: testState.sessionsDir,
-      forceMaintenance: true,
-      maintenanceConfig: {
-        mode: "enforce",
-        pruneAfterMs: 365 * DAY_MS,
-        archiveDashboardAfterMs: null,
-        maxEntries: Number.MAX_SAFE_INTEGER,
-        modelRunPruneAfterMs: Number.MAX_SAFE_INTEGER,
-        preserveRecentMs: 7 * DAY_MS,
-        resetArchiveRetentionMs: null,
-        maxDiskBytes: null,
-        highWaterBytes: null,
-      },
-      storePath,
-    });
+    const activeSessionIds = new Set(fixture.activeSession.sessionIds);
+    const activeSessionEntry = readExactSessionEntryRow(
+      database,
+      fixture.activeSession.sessionKey,
+    )?.entry;
+    const materializedActiveSessionIds = new Set(
+      activeSessionEntry ? collectSessionStateIdsForEntry(activeSessionEntry) : [],
+    );
+    const activeSessionFixtures = Number(
+      activeSessionIds.size > 0 &&
+        activeSessionEntry !== undefined &&
+        activeSessionEntry.pinnedAt === undefined &&
+        activeSessionEntry.archivedAt === undefined &&
+        activeSessionEntry.updatedAt < Date.now() - PRUNE_AFTER_MS &&
+        [...activeSessionIds].every((sessionId) => materializedActiveSessionIds.has(sessionId)),
+    );
+    if (activeSessionFixtures !== 1) {
+      throw new Error(
+        `Active-session fixture was not materialized as stale and unpinned for ${params.workload}`,
+      );
+    }
+    const maintenanceConfig = {
+      mode: "enforce",
+      pruneAfterMs: PRUNE_AFTER_MS,
+      archiveDashboardAfterMs: null,
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      modelRunPruneAfterMs: Number.MAX_SAFE_INTEGER,
+      preserveRecentMs: PRESERVE_RECENT_MS,
+      resetArchiveRetentionMs: null,
+      maxDiskBytes: null,
+      highWaterBytes: null,
+    } as const;
+    const planForActiveSessionKey = (activeSessionKey: string) =>
+      applySessionEntryMaintenance(database, {
+        activeSessionKey,
+        archiveDirectory: testState.sessionsDir,
+        forceMaintenance: true,
+        maintenanceConfig,
+        storePath,
+      });
+    const controlPlan = planForActiveSessionKey(RETENTION_CONTROL_SESSION_KEY);
+    const activeSessionControlCandidates = Number(
+      maintenancePlanContainsSessionIdentity({
+        plan: controlPlan,
+        sessionKey: fixture.activeSession.sessionKey,
+        sessionIds: activeSessionIds,
+      }),
+    );
+    if (activeSessionControlCandidates !== 1) {
+      throw new Error(
+        `Active-session fixture was not an unprotected maintenance candidate for ${params.workload}`,
+      );
+    }
+    const plan = planForActiveSessionKey(fixture.activeSession.sessionKey);
     const fingerprintAfterPlanner = readSessionStoreFingerprint(database);
     const ownershipGroups = buildRetentionOwnershipGroups([plan]);
     const plannedKeys = new Set(
@@ -161,6 +232,13 @@ async function benchmarkWorkload(params: {
     const plannerProtectionViolations = fixture.protectedSessionKeys.filter((key) =>
       plannedKeys.has(key),
     ).length;
+    const activeSessionPlanViolations = Number(
+      maintenancePlanContainsSessionIdentity({
+        plan,
+        sessionKey: fixture.activeSession.sessionKey,
+        sessionIds: activeSessionIds,
+      }),
+    );
     closeOpenClawAgentDatabasesForTest();
 
     const heapBeforeBytes = process.memoryUsage().heapUsed;
@@ -169,12 +247,30 @@ async function benchmarkWorkload(params: {
       database: target,
       ownershipGroups,
     });
+    const protectedSessionKeys = new Set(fixture.protectedSessionKeys);
+    const projectedProtectedGroupIds = new Set(
+      projection.groups
+        .filter(
+          (group) =>
+            group.sessionKeys.some((sessionKey) => protectedSessionKeys.has(sessionKey)) ||
+            group.sessionIds.some((sessionId) => activeSessionIds.has(sessionId)),
+        )
+        .map((group) => group.groupId),
+    );
+    const activeSessionRankingViolations = projection.groups.filter(
+      (group) =>
+        group.sessionKeys.includes(fixture.activeSession.sessionKey) ||
+        group.sessionIds.some((sessionId) => activeSessionIds.has(sessionId)),
+    ).length;
+    // Every projected ownership group is a candidate supplied to each ranker, even if the
+    // byte-target selector would not ultimately choose it.
     const policyMetrics = POLICIES.map((policy): TimedPolicyMetrics => {
       const heapBeforePolicy = process.memoryUsage().heapUsed;
       const startedAt = performance.now();
       const metrics = evaluateRetentionPolicy({
         groups: projection.groups,
         policy,
+        protectedGroupIds: projectedProtectedGroupIds,
         targetBytes: Math.max(
           1,
           Math.floor(
@@ -213,6 +309,8 @@ async function benchmarkWorkload(params: {
         sessionEntries: fixture.sessionEntriesCreated,
         transcriptEvents: fixture.transcriptEventsCreated,
         sqlQueries: projection.queryCount,
+        activeSessionFixtures,
+        activeSessionControlCandidates,
       },
       analysisRuntimeMs,
       heapBeforeBytes,
@@ -220,6 +318,8 @@ async function benchmarkWorkload(params: {
       heapDeltaBytes: heapAfterBytes - heapBeforeBytes,
       policies: policyMetrics,
       invariants: {
+        activeSessionPlanViolations,
+        activeSessionRankingViolations,
         protectedGroupViolations,
         ownershipGroupSplits,
         actualMutations,
@@ -282,6 +382,14 @@ export async function runRetentionBenchmark(params: {
     evaluationWeightSet: POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
     workloads,
     invariants: {
+      activeSessionPlanViolations: workloads.reduce(
+        (total, workload) => total + workload.invariants.activeSessionPlanViolations,
+        0,
+      ),
+      activeSessionRankingViolations: workloads.reduce(
+        (total, workload) => total + workload.invariants.activeSessionRankingViolations,
+        0,
+      ),
       protectedGroupViolations: workloads.reduce(
         (total, workload) => total + workload.invariants.protectedGroupViolations,
         0,
@@ -307,6 +415,8 @@ export async function runRetentionBenchmark(params: {
   }
   printComparisonTable(report);
   if (
+    report.invariants.activeSessionPlanViolations !== 0 ||
+    report.invariants.activeSessionRankingViolations !== 0 ||
     report.invariants.protectedGroupViolations !== 0 ||
     report.invariants.ownershipGroupSplits !== 0 ||
     report.invariants.actualMutations !== 0

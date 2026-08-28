@@ -36,10 +36,27 @@ it("runs every temporary-store workload without mutations, splits, or protection
 
   expect(report.workloads).toHaveLength(5);
   expect(report.invariants).toEqual({
+    activeSessionPlanViolations: 0,
+    activeSessionRankingViolations: 0,
     protectedGroupViolations: 0,
     ownershipGroupSplits: 0,
     actualMutations: 0,
   });
+  expect(
+    report.workloads.every(
+      (workload) =>
+        workload.inputCounts.activeSessionFixtures === 1 &&
+        workload.inputCounts.activeSessionControlCandidates === 1,
+    ),
+  ).toBe(true);
+  expect(
+    report.workloads.every(
+      (workload) =>
+        workload.invariants.activeSessionPlanViolations === 0 &&
+        workload.invariants.activeSessionRankingViolations === 0 &&
+        workload.policies.every((policy) => policy.protectedGroupViolations === 0),
+    ),
+  ).toBe(true);
   expect(report.workloads.every((workload) => workload.invariants.isolatedStateDirectory)).toBe(
     true,
   );

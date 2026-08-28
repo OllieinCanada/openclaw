@@ -131,9 +131,9 @@ configuration.
 
 ## Workloads and failure models
 
-All fixtures use production session writers against disposable SQLite stores created by
-`createOpenClawTestState`, which uses `fs.mkdtemp`, `os.tmpdir`, and an isolated
-`OPENCLAW_STATE_DIR`. State is removed in `finally` blocks.
+All fixtures use production session writers against disposable SQLite stores created by the
+benchmark-owned `createDisposableRetentionState`, which uses `fs.mkdtemp`, `os.tmpdir`, and an
+isolated `OPENCLAW_STATE_DIR`. State is removed in `finally` blocks.
 
 - **A — isolated stale bulk:** independent old sessions with varied bounded transcript sizes;
 - **B — fork fan-out:** fork sources and descendants mixed with similarly old isolated sessions;
@@ -143,13 +143,23 @@ All fixtures use production session writers against disposable SQLite stores cre
 - **E — mixed disk pressure:** small connected groups, large isolated groups, recent and pinned
   entries, stale history, and shared multi-session ownership groups.
 
+Every workload also materializes one stale, unpinned fixture and supplies that exact generated key
+as the canonical planner's active session. The active fixture deliberately uses an otherwise
+eligible non-primary key: primary `agent:<id>:main` sessions have a separate preservation rule and
+would not isolate the active-key boundary. The report fails if the active fixture's key or state IDs
+reach either the deletion plan or the projected ranking candidates, and records one materialized
+active fixture per workload. A control plan first uses a nonmatching active key and must include the
+fixture as a deletion candidate, proving that the exact-key zero-violation result exercises
+active-session protection rather than another preservation rule.
+
 Smoke uses about 100 groups and default about 1,000 across the five workloads.
 
 ## Run the benchmark
 
 Run the supported package command from the repository root. Both modes write a machine-readable
 report to `.artifacts/session-retention-analysis/<mode>.json`; the command exits nonzero if it
-observes a protected-group violation, ownership-group split, or store mutation.
+observes an active-session planning or ranking violation, protected-group violation,
+ownership-group split, or store mutation.
 
 ```bash
 pnpm sessions:retention:benchmark --mode smoke
@@ -202,8 +212,9 @@ workload delta negative.
 Each 200-group workload used four SQL queries, except generation chains (seven); mixed pressure
 projected 140 eligible groups from 220 sessions in four queries.
 
-Both smoke and default reports recorded zero protected-group violations, zero ownership-group
-splits, and zero store mutations. Generated JSON is written under the ignored
+Both smoke and default reports recorded zero active-session planning or ranking violations, zero
+protected-group violations, zero ownership-group splits, and zero store mutations. Generated JSON
+is written under the ignored
 `.artifacts/session-retention-analysis/` directory and includes the repository commit, Node version,
 fixture version, policies, candidate ranking weight sets, the separate evaluation weight set, input
 counts, outputs, timings, and invariants.
