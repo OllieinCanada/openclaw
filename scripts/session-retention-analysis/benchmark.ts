@@ -35,7 +35,7 @@ import {
   type RetentionWorkloadName,
 } from "./workloads.js";
 
-export type BenchmarkMode = "smoke" | "default" | "large";
+export type BenchmarkMode = "smoke" | "default";
 
 type TimedPolicyMetrics = RetentionPolicyMetrics & {
   runtimeMs: number;
@@ -93,7 +93,6 @@ const POLICIES: RetentionPolicyName[] = [
 const GROUPS_PER_WORKLOAD: Record<BenchmarkMode, number> = {
   smoke: 20,
   default: 200,
-  large: 2_000,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -268,11 +267,6 @@ export async function runRetentionBenchmark(params: {
   groupsPerWorkload?: number;
   writeArtifact?: boolean;
 }): Promise<RetentionBenchmarkReport> {
-  if (params.mode === "large" && process.env.OPENCLAW_SESSION_RETENTION_LARGE !== "1") {
-    throw new Error(
-      "Large retention benchmark requires OPENCLAW_SESSION_RETENTION_LARGE=1 as an explicit opt-in",
-    );
-  }
   const groupsPerWorkload = params.groupsPerWorkload ?? GROUPS_PER_WORKLOAD[params.mode];
   const workloads: WorkloadBenchmarkResult[] = [];
   for (const workload of WORKLOAD_NAMES) {
@@ -326,7 +320,7 @@ export async function runRetentionBenchmark(params: {
 function parseMode(argv: readonly string[]): BenchmarkMode {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "default";
-  if (mode !== "smoke" && mode !== "default" && mode !== "large") {
+  if (mode !== "smoke" && mode !== "default") {
     throw new Error(`Unknown benchmark mode: ${mode ?? "<missing>"}`);
   }
   return mode;

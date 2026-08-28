@@ -143,23 +143,18 @@ All fixtures use production session writers against disposable SQLite stores cre
 - **E — mixed disk pressure:** small connected groups, large isolated groups, recent and pinned
   entries, stale history, and shared multi-session ownership groups.
 
-Smoke uses about 100 groups, default about 1,000, and the opt-in large run about 10,000 across the
-five workloads. The large mode requires `OPENCLAW_SESSION_RETENTION_LARGE=1`.
+Smoke uses about 100 groups and default about 1,000 across the five workloads.
 
 ## Run the benchmark
 
-Run the supported package command from the repository root. Each mode writes a machine-readable
-report to `.artifacts/session-retention-analysis/<mode>.json` and exits nonzero if it observes a
-protected-group violation, ownership-group split, or store mutation.
+Run the supported package command from the repository root. Both modes write a machine-readable
+report to `.artifacts/session-retention-analysis/<mode>.json`; the command exits nonzero if it
+observes a protected-group violation, ownership-group split, or store mutation.
 
 ```bash
 pnpm sessions:retention:benchmark --mode smoke
 pnpm sessions:retention:benchmark --mode default
-OPENCLAW_SESSION_RETENTION_LARGE=1 pnpm sessions:retention:benchmark --mode large
 ```
-
-Large mode is deliberately opt-in because it constructs about 10,000 groups through production
-storage APIs before running the read-only analysis.
 
 ## Default benchmark results
 
@@ -199,7 +194,7 @@ measurements are observational, not CI thresholds, and are expected to vary in l
 Negative heap deltas reflect garbage collection between `heapUsed` observations, not negative memory
 allocation.
 
-## Computer cost and large-run observations
+## Computer cost observations
 
 Default projection plus all five policy evaluations completed in tens of milliseconds per workload.
 Positive post-analysis heap deltas were in the tens of megabytes; garbage collection made one
@@ -207,19 +202,7 @@ workload delta negative.
 Each 200-group workload used four SQL queries, except generation chains (seven); mixed pressure
 projected 140 eligible groups from 220 sessions in four queries.
 
-The opt-in large run projected 9,400 eligible ownership groups, 12,200 sessions, and 37,409 bounded
-events across all workloads. Per-workload analysis remained under one second, and the largest
-observed positive post-analysis heap delta remained under 40 MB. Query counts stayed bounded at
-32–56 per workload. Fixture construction through production writers is intentionally excluded from
-analysis timing and was slower than the read-only analysis.
-
-Large-run outcomes reproduced the direction of the default policy-independent proxy: graph-aware
-preserved 607.2002 versus 543.1613 for existing order on fork fan-out, 751.7047 versus 736.7342 on
-generation chains, and 398.6525 versus 386.4521 on mixed pressure. It remained worse on spawn trees
-(606.0352 versus 634.0176) and nearly neutral on isolated bulk (805.5449 versus 800.9125). The
-alternate ranking weights produced the same directional observations under the fixed evaluator.
-
-All smoke, default, and large reports recorded zero protected-group violations, zero ownership-group
+Both smoke and default reports recorded zero protected-group violations, zero ownership-group
 splits, and zero store mutations. Generated JSON is written under the ignored
 `.artifacts/session-retention-analysis/` directory and includes the repository commit, Node version,
 fixture version, policies, candidate ranking weight sets, the separate evaluation weight set, input
@@ -231,8 +214,8 @@ counts, outputs, timings, and invariants.
   out from candidate weights but is not an observed recovery outcome or empirical ground truth.
 - Cohort min/max normalization makes scores comparative within one cleanup plan.
 - Estimated reclaimable bytes include metadata constants rather than exact SQLite page recovery.
-- Descendant traversal is iterative and safe at 10,000 groups, but worst-case dense graphs need
-  further complexity measurement.
+- Descendant traversal is iterative, but worst-case dense graphs need further complexity
+  measurement.
 - Post-analysis `heapUsed` deltas are sensitive to garbage collection and are not peak RSS.
 - The spawn-tree loss shows that the eviction formula can overvalue byte yield relative to connected
   structure; the feature model should not be promoted unchanged.
@@ -244,7 +227,7 @@ counts, outputs, timings, and invariants.
 The evidence supports a narrow follow-up because two candidate ranking sets retain more of the fixed
 policy-independent proxy in relationship-heavy fork, generation, and mixed workloads without schema
 changes or safety violations. It does not establish real recovery value or support changing
-production cleanup order: the spawn-tree regression, synthetic proxy, and large-run cost require
+production cleanup order: the spawn-tree regression, synthetic proxy, and computational cost require
 more evidence.
 
 The next step should be a maintainer RFC or opt-in dry-run explanation that samples anonymized
