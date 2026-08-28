@@ -11,7 +11,6 @@ import {
   openOpenClawAgentDatabase,
   type OpenClawAgentDatabase,
 } from "../../src/state/openclaw-agent-db.js";
-import { createOpenClawTestState } from "../../src/test-utils/openclaw-test-state.js";
 import {
   BALANCED_GRAPH_WEIGHTS,
   PRIMARY_GRAPH_WEIGHTS,
@@ -26,7 +25,7 @@ import {
   buildRetentionOwnershipGroups,
   projectSessionRetentionGroups,
 } from "./sqlite-projection.js";
-import { assertIsolatedStateEnvironment, RETENTION_TEMP_PREFIX } from "./state-safety.js";
+import { assertIsolatedStateEnvironment, createDisposableRetentionState } from "./state-safety.js";
 import { readSessionStoreFingerprint } from "./store-fingerprint.js";
 import {
   populateRetentionWorkload,
@@ -124,13 +123,10 @@ async function benchmarkWorkload(params: {
   workload: RetentionWorkloadName;
   groupsPerWorkload: number;
 }): Promise<WorkloadBenchmarkResult> {
-  const testState = await createOpenClawTestState({
-    prefix: RETENTION_TEMP_PREFIX,
-    layout: "state-only",
-  });
+  const testState = await createDisposableRetentionState();
   try {
     assertIsolatedStateEnvironment(testState.stateDir);
-    const storePath = path.join(testState.sessionsDir(), "sessions.json");
+    const storePath = path.join(testState.sessionsDir, "sessions.json");
     const fixture = populateRetentionWorkload({
       storePath,
       workload: params.workload,
@@ -142,7 +138,7 @@ async function benchmarkWorkload(params: {
     const fingerprintBefore = readSessionStoreFingerprint(database);
     const plan = applySessionEntryMaintenance(database, {
       activeSessionKey: "agent:main:main",
-      archiveDirectory: testState.sessionsDir(),
+      archiveDirectory: testState.sessionsDir,
       forceMaintenance: true,
       maintenanceConfig: {
         mode: "enforce",
@@ -231,8 +227,11 @@ async function benchmarkWorkload(params: {
       },
     };
   } finally {
-    closeOpenClawAgentDatabasesForTest();
-    await testState.cleanup();
+    try {
+      closeOpenClawAgentDatabasesForTest();
+    } finally {
+      await testState.cleanup();
+    }
   }
 }
 

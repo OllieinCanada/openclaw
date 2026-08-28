@@ -18,7 +18,16 @@ function deterministicMetrics(report: Awaited<ReturnType<typeof runRetentionBenc
   }));
 }
 
+function retentionEnvironment() {
+  return {
+    stateDir: process.env.OPENCLAW_STATE_DIR,
+    configPath: process.env.OPENCLAW_CONFIG_PATH,
+    agentDir: process.env.OPENCLAW_AGENT_DIR,
+  };
+}
+
 it("runs every temporary-store workload without mutations, splits, or protection violations", async () => {
+  const environmentBefore = retentionEnvironment();
   const report = await runRetentionBenchmark({
     mode: "smoke",
     groupsPerWorkload: 4,
@@ -39,6 +48,7 @@ it("runs every temporary-store workload without mutations, splits, or protection
   expect(report.evaluationWeightSet.weights).not.toEqual(PRIMARY_GRAPH_WEIGHTS.weights);
   expect(report.evaluationWeightSet.weights).not.toEqual(BALANCED_GRAPH_WEIGHTS.weights);
   expect(JSON.stringify(report)).not.toMatch(/[A-Z]:\\Users\\/u);
+  expect(retentionEnvironment()).toEqual(environmentBefore);
 });
 
 it("produces identical policy metrics from independently created fixtures", async () => {

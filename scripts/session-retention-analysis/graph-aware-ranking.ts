@@ -1,4 +1,4 @@
-export type SessionRetentionEvidence = {
+type SessionRetentionEvidence = {
   hasAccessMetadata: boolean;
   hasLineageMetadata: boolean;
   hasSizeMetadata: boolean;
@@ -30,7 +30,7 @@ export type SessionRetentionGroup = {
   evidence: SessionRetentionEvidence;
 };
 
-export type GraphAwareFeature =
+type GraphAwareFeature =
   | "activityRecency"
   | "accessRecency"
   | "lineageCentrality"
@@ -136,7 +136,7 @@ function latestTimestamp(values: readonly (number | null)[]): number | null {
  * Cleanup recency fallback: activity, interaction, access, then node update.
  * A missing value does not become an infinitely old timestamp.
  */
-export function resolveLeastRecentActivityAt(group: SessionRetentionGroup): number | null {
+function resolveLeastRecentActivityAt(group: SessionRetentionGroup): number | null {
   return (
     finiteTimestamp(group.lastActivityAt) ??
     finiteTimestamp(group.lastInteractionAt) ??

@@ -21,7 +21,7 @@ export const POLICY_INDEPENDENT_EVALUATION_WEIGHTS: GraphAwareWeightSet = {
   },
 };
 
-export type EvaluationValueCurve = {
+type EvaluationValueCurve = {
   first10Percent: number;
   first25Percent: number;
   first50Percent: number;
