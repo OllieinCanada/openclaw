@@ -10,6 +10,7 @@ function deterministicMetrics(report: Awaited<ReturnType<typeof runRetentionBenc
   return report.workloads.map((workload) => ({
     workload: workload.workload,
     targetBytes: workload.targetBytes,
+    policyIndependentValueByCostBaseline: workload.policyIndependentValueByCostBaseline,
     inputCounts: workload.inputCounts,
     policies: workload.policies.map(
       ({ runtimeMs: _runtimeMs, heapDeltaBytes: _heapDelta, ...policy }) => policy,
@@ -47,6 +48,13 @@ it("runs every temporary-store workload without mutations, splits, or protection
       (workload) =>
         workload.inputCounts.activeSessionFixtures === 1 &&
         workload.inputCounts.activeSessionControlCandidates === 1,
+    ),
+  ).toBe(true);
+  expect(
+    report.workloads.every(
+      (workload) =>
+        Object.values(workload.policyIndependentValueByCostBaseline).every(Number.isFinite) &&
+        workload.policies.every((policy) => !("policyIndependentValueByCost" in policy)),
     ),
   ).toBe(true);
   expect(

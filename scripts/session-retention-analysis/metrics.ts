@@ -21,7 +21,7 @@ export const POLICY_INDEPENDENT_EVALUATION_WEIGHTS: GraphAwareWeightSet = {
   },
 };
 
-type EvaluationValueCurve = {
+export type PolicyIndependentValueByCostBaseline = {
   first10Percent: number;
   first25Percent: number;
   first50Percent: number;
@@ -36,7 +36,6 @@ export type RetentionPolicyMetrics = {
   policyIndependentValuePreserved: number;
   policyIndependentDependencyWeightedValuePreserved: number;
   policyIndependentHighValueGroupsPreserved: number;
-  policyIndependentValueByCost: EvaluationValueCurve;
   protectedGroupViolations: number;
   ownershipGroupSplits: number;
   selectedGroupIds: string[];
@@ -48,7 +47,9 @@ function roundMetric(value: number): number {
   return Number.isFinite(value) ? Number(value.toFixed(METRIC_PRECISION)) : 0;
 }
 
-function evaluationValueCurve(groups: readonly SessionRetentionGroup[]): EvaluationValueCurve {
+export function evaluatePolicyIndependentValueByCostBaseline(
+  groups: readonly SessionRetentionGroup[],
+): PolicyIndependentValueByCostBaseline {
   const ranking = rankRetentionGroupsForRecovery({
     groups,
     weightSet: POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
@@ -140,7 +141,6 @@ export function evaluateRetentionPolicy(params: {
     policyIndependentHighValueGroupsPreserved: highValueGroups.filter(
       (group) => !selectedGroupIds.has(group.groupId),
     ).length,
-    policyIndependentValueByCost: evaluationValueCurve(params.groups),
     protectedGroupViolations,
     ownershipGroupSplits: 0,
     selectedGroupIds: [...selectedGroupIds],

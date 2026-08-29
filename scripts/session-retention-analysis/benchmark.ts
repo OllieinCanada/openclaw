@@ -20,8 +20,10 @@ import {
   type RetentionPolicyName,
 } from "./graph-aware-ranking.js";
 import {
+  evaluatePolicyIndependentValueByCostBaseline,
   evaluateRetentionPolicy,
   POLICY_INDEPENDENT_EVALUATION_WEIGHTS,
+  type PolicyIndependentValueByCostBaseline,
   type RetentionPolicyMetrics,
 } from "./metrics.js";
 import {
@@ -47,6 +49,7 @@ type TimedPolicyMetrics = RetentionPolicyMetrics & {
 type WorkloadBenchmarkResult = {
   workload: RetentionWorkloadName;
   targetBytes: number;
+  policyIndependentValueByCostBaseline: PolicyIndependentValueByCostBaseline;
   inputCounts: {
     ownershipGroups: number;
     sessions: number;
@@ -257,13 +260,16 @@ async function benchmarkWorkload(params: {
         )
         .map((group) => group.groupId),
     );
+    // Every projected ownership group is a candidate supplied to each ranker, even if the
+    // byte-target selector would not ultimately choose it.
     const activeSessionRankingViolations = projection.groups.filter(
       (group) =>
         group.sessionKeys.includes(fixture.activeSession.sessionKey) ||
         group.sessionIds.some((sessionId) => activeSessionIds.has(sessionId)),
     ).length;
-    // Every projected ownership group is a candidate supplied to each ranker, even if the
-    // byte-target selector would not ultimately choose it.
+    const policyIndependentValueByCostBaseline = evaluatePolicyIndependentValueByCostBaseline(
+      projection.groups,
+    );
     const policyMetrics = POLICIES.map((policy): TimedPolicyMetrics => {
       const heapBeforePolicy = process.memoryUsage().heapUsed;
       const startedAt = performance.now();
@@ -303,6 +309,7 @@ async function benchmarkWorkload(params: {
     return {
       workload: params.workload,
       targetBytes,
+      policyIndependentValueByCostBaseline,
       inputCounts: {
         ownershipGroups: projection.groups.length,
         sessions: projection.groups.reduce((total, group) => total + group.sessionIds.length, 0),
