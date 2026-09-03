@@ -116,6 +116,9 @@ export function buildSessionListParams(options: SessionListOptions = {}): Record
   if (options.boardFace) {
     params.boardFace = options.boardFace;
   }
+  if (options.hasBoard !== undefined) {
+    params.hasBoard = options.hasBoard;
+  }
   if (agentId) {
     params.agentId = agentId;
   }
@@ -178,17 +181,16 @@ export function requestSessionDelete(
   key: string,
   options: SessionDeleteOptions = {},
 ): Promise<SessionsDeleteResult> {
-  return client.request<SessionsDeleteResult>("sessions.delete", {
-    ...buildSessionRequestParams(key, options.agentId),
-    deleteTranscript: options.deleteTranscript ?? true,
-    ...(options.expectedSessionId ? { expectedSessionId: options.expectedSessionId } : {}),
-    ...(options.archivedOnly === true ? { archivedOnly: true } : {}),
-  });
-}
-
-export function confirmsSessionDeletion(response: SessionsDeleteResult): boolean {
-  // A successful RPC may be a lifecycle no-op; only confirmed deletion removes state.
-  return response.deleted;
+  return client.request<SessionsDeleteResult>(
+    "sessions.delete",
+    {
+      ...buildSessionRequestParams(key, options.agentId),
+      deleteTranscript: options.deleteTranscript ?? true,
+      ...(options.expectedSessionId ? { expectedSessionId: options.expectedSessionId } : {}),
+      ...(options.archivedOnly === true ? { archivedOnly: true } : {}),
+    },
+    SESSION_ARCHIVE_REQUEST_OPTIONS,
+  );
 }
 
 export function requestSessionReset(

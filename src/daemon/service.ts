@@ -31,7 +31,10 @@ import {
 } from "./schtasks.js";
 import { mergeGatewayServiceEnv } from "./service-env-merge.js";
 import { resolveServiceEntrypoint } from "./service-layout.js";
-import type { GatewayServiceRuntime } from "./service-runtime.js";
+import {
+  createServiceRuntimeInspectionFailure,
+  type GatewayServiceRuntime,
+} from "./service-runtime.js";
 import type {
   GatewayServiceCommandConfig,
   GatewayServiceControlArgs,
@@ -48,6 +51,7 @@ import type {
   GatewayServiceState,
 } from "./service-types.js";
 import { readSystemdDefinitionMutationCapability } from "./systemd-definition-mutation.js";
+import { isSystemdServiceAbsent } from "./systemd-scope.js";
 import {
   findInstalledSystemdGatewayScope,
   installSystemdService,
@@ -89,6 +93,7 @@ export type GatewayService = {
   isLoaded: (args: GatewayServiceEnvArgs) => Promise<boolean>;
   isEnabled?: (args: GatewayServiceEnvArgs) => Promise<boolean>;
   hasInstalledDefinition?: (args: GatewayServiceEnvArgs) => Promise<boolean>;
+  isAbsent?: (args: GatewayServiceEnvArgs) => Promise<boolean>;
   readDefinitionMutationCapability?: (
     args: GatewayServiceEnvArgs & { environment?: GatewayServiceEnv },
   ) => ReturnType<typeof readSystemdDefinitionMutationCapability>;
@@ -110,7 +115,6 @@ type ReadGatewayServiceStateArgs = GatewayServiceEnvArgs & {
 const TEMP_PROGRAM_ROOTS = [os.tmpdir(), "/tmp", "/private/tmp", "/var/tmp"].map((entry) =>
   path.resolve(entry),
 );
-
 function pathIsSameOrChild(candidate: string, parent: string): boolean {
   return candidate === parent || candidate.startsWith(`${parent}${path.sep}`);
 }
@@ -202,6 +206,18 @@ export async function readGatewayServiceState(
 ): Promise<GatewayServiceState> {
   const baseEnv = args.env ?? (process.env as GatewayServiceEnv);
   const { timeoutMs } = args;
+  // Native absence is affirmative evidence; failed effective-command inspection is not.
+  if (await service.isAbsent?.({ env: baseEnv, timeoutMs }).catch(() => false)) {
+    args.validateEnvBeforeStatusRead?.(baseEnv);
+    return {
+      installed: false,
+      loadState: { status: "not-loaded" },
+      running: false,
+      env: baseEnv,
+      command: null,
+      runtime: { status: "stopped", missingUnit: true },
+    };
+  }
   const command = args.requireEffective
     ? await service.readCommand(baseEnv, { timeoutMs, requireEffective: true })
     : await service.readCommand(baseEnv, { timeoutMs }).catch(() => null);
@@ -213,15 +229,14 @@ export async function readGatewayServiceState(
       ? true
       : (service.hasInstalledDefinition?.({ env, timeoutMs }).catch(() => false) ?? false),
     readGatewayServiceLoadState(service, { env, timeoutMs }),
-    service.readRuntime(env, { timeoutMs }).catch((error: unknown) => ({
-      status: "unknown" as const,
-      detail: String(error),
-    })),
+    service
+      .readRuntime(env, { timeoutMs })
+      .catch((error: unknown) => createServiceRuntimeInspectionFailure(error)),
     // Update policy needs definition authority; ordinary status/start reads do not.
     args.requireEffective
       ? service
           .readDefinitionMutationCapability?.({ env: baseEnv, environment: env, timeoutMs })
-          .catch(() => ({ kind: "unknown" as const, detail: "Cannot inspect service definition." }))
+          .catch(() => ({ kind: "unknown", reason: "inspection-failed" }) as const)
       : undefined,
   ]);
   return {
@@ -389,6 +404,7 @@ const GATEWAY_SERVICE_REGISTRY: Record<SupportedGatewayServicePlatform, GatewayS
     stop: stopSystemdService,
     restart: restartSystemdService,
     isLoaded: isSystemdServiceEnabled,
+    isAbsent: ({ env }) => isSystemdServiceAbsent(env ?? process.env),
     hasInstalledDefinition: async ({ env }) =>
       (await findInstalledSystemdGatewayScope(env ?? process.env)) !== null,
     readDefinitionMutationCapability: ({ env, environment, timeoutMs }) =>
