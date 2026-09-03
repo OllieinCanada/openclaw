@@ -35,6 +35,8 @@ function writeFixtureEntry(params: {
   sessionKey: string;
   sessionId: string;
   updatedAt: number;
+  parentSessionKey?: string;
+  spawnedBy?: string;
   pinnedAt?: number;
   usageFamilySessionIds?: string[];
 }): void {
@@ -44,6 +46,8 @@ function writeFixtureEntry(params: {
       sessionId: params.sessionId,
       updatedAt: params.updatedAt,
       lastActivityAt: params.updatedAt,
+      ...(params.parentSessionKey ? { parentSessionKey: params.parentSessionKey } : {}),
+      ...(params.spawnedBy ? { spawnedBy: params.spawnedBy } : {}),
       ...(params.pinnedAt ? { pinnedAt: params.pinnedAt } : {}),
       ...(params.usageFamilySessionIds
         ? { usageFamilySessionIds: params.usageFamilySessionIds }
@@ -158,6 +162,106 @@ describe("read-only SQLite session retention projection", () => {
       expect(existingOrder.map((ranked) => ranked.group.groupId)).toEqual(
         projection.groups.map((group) => group.groupId),
       );
+      const fingerprintAfter = withOpenClawAgentDatabaseReadOnly(
+        (readonlyDatabase) =>
+          readSessionStoreFingerprint(readonlyDatabase as OpenClawAgentDatabase),
+        { agentId: "main", path: target.path },
+      );
+      expect(fingerprintAfter).toEqual({ found: true, value: fingerprintBefore });
+    } finally {
+      await state.cleanup();
+    }
+  });
+
+  it("preserves distinct parent and spawner links from historical session windows", async () => {
+    const state = await createOpenClawTestState({
+      prefix: RETENTION_TEMP_PREFIX,
+      layout: "state-only",
+    });
+    try {
+      assertIsolatedStateEnvironment(state.stateDir);
+      const storePath = path.join(state.sessionsDir(), "sessions.json");
+      const parentKey = "agent:main:lineage-parent";
+      const spawnerKey = "agent:main:lineage-spawner";
+      const childKey = "agent:main:lineage-child";
+      writeFixtureEntry({
+        storePath,
+        sessionKey: parentKey,
+        sessionId: "lineage-parent",
+        updatedAt: 1,
+      });
+      writeFixtureEntry({
+        storePath,
+        sessionKey: spawnerKey,
+        sessionId: "lineage-spawner",
+        updatedAt: 2,
+      });
+      writeFixtureEntry({
+        storePath,
+        sessionKey: childKey,
+        sessionId: "lineage-child-history",
+        updatedAt: 3,
+        parentSessionKey: parentKey,
+        spawnedBy: spawnerKey,
+      });
+      // Rotate the child through the production writer so its distinct lineage survives only on
+      // the historical window rather than the current node.
+      writeFixtureEntry({
+        storePath,
+        sessionKey: childKey,
+        sessionId: "lineage-child-current",
+        updatedAt: 4,
+      });
+
+      const target = resolveSqliteTargetFromSessionStorePath(storePath, { agentId: "main" });
+      if (!target.path) {
+        throw new Error("expected lineage fixture database path");
+      }
+      const database = openOpenClawAgentDatabase({ agentId: "main", path: target.path });
+      const fingerprintBefore = readSessionStoreFingerprint(database);
+      const plan = applySessionEntryMaintenance(database, {
+        activeSessionKey: "agent:main:main",
+        archiveDirectory: state.sessionsDir(),
+        forceMaintenance: true,
+        maintenanceConfig: {
+          mode: "enforce",
+          pruneAfterMs: 1,
+          archiveDashboardAfterMs: null,
+          maxEntries: Number.MAX_SAFE_INTEGER,
+          modelRunPruneAfterMs: Number.MAX_SAFE_INTEGER,
+          preserveRecentMs: 0,
+          resetArchiveRetentionMs: null,
+          maxDiskBytes: null,
+          highWaterBytes: null,
+        },
+        storePath,
+      });
+      expect(readSessionStoreFingerprint(database)).toBe(fingerprintBefore);
+      const ownershipGroups = buildRetentionOwnershipGroups([plan]);
+      closeOpenClawAgentDatabasesForTest();
+
+      const projection = projectSessionRetentionGroups({
+        database: { agentId: "main", path: target.path },
+        ownershipGroups,
+      });
+      const groupByKey = new Map(
+        projection.groups.flatMap((group) => group.sessionKeys.map((key) => [key, group] as const)),
+      );
+      const parent = groupByKey.get(parentKey);
+      const spawner = groupByKey.get(spawnerKey);
+      const child = groupByKey.get(childKey);
+      if (!parent || !spawner || !child) {
+        throw new Error("expected parent, spawner, and child retention groups");
+      }
+      expect(child.parentGroupIds).toEqual([parent.groupId, spawner.groupId].toSorted());
+      expect(parent.childGroupIds).toEqual([child.groupId]);
+      expect(spawner.childGroupIds).toEqual([child.groupId]);
+      expect(parent.directChildCount).toBe(1);
+      expect(spawner.directChildCount).toBe(1);
+      expect(parent.descendantCount).toBe(1);
+      expect(spawner.descendantCount).toBe(1);
+      expect(child.directChildCount).toBe(0);
+      expect(child.descendantCount).toBe(0);
       const fingerprintAfter = withOpenClawAgentDatabaseReadOnly(
         (readonlyDatabase) =>
           readSessionStoreFingerprint(readonlyDatabase as OpenClawAgentDatabase),

@@ -5,9 +5,9 @@ import {
   buildSessionMaintenanceOwnershipGroups,
   type SessionMaintenanceOwnershipGroup,
 } from "../../src/config/sessions/session-accessor.sqlite-maintenance.js";
-import { coerceSqliteNumber } from "../../src/config/sessions/session-accessor.sqlite-normalize.js";
 import { getSessionKysely } from "../../src/config/sessions/session-accessor.sqlite-scope.js";
 import { executeSqliteQuerySync } from "../../src/infra/kysely-sync.js";
+import { coerceRequiredSqliteNumber } from "../../src/infra/sqlite-number.js";
 import type { OpenClawAgentDatabaseOptions } from "../../src/state/openclaw-agent-db-contract.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../src/state/openclaw-agent-db-readonly.js";
 import type { OpenClawAgentDatabase } from "../../src/state/openclaw-agent-db.js";
@@ -71,7 +71,7 @@ function toFiniteTimestamp(value: unknown): number | null {
   if (value === null || value === undefined) {
     return null;
   }
-  const number = coerceSqliteNumber(value as number | bigint);
+  const number = coerceRequiredSqliteNumber(value as number | bigint);
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
@@ -347,8 +347,12 @@ function buildRetentionGroups(params: {
       );
       addDifferentGroup(
         parentGroupIds,
-        groupIdBySessionKey.get(window.parent_session_key ?? "") ??
-          groupIdBySessionKey.get(window.spawned_by ?? ""),
+        groupIdBySessionKey.get(window.parent_session_key ?? ""),
+        seed.groupId,
+      );
+      addDifferentGroup(
+        parentGroupIds,
+        groupIdBySessionKey.get(window.spawned_by ?? ""),
         seed.groupId,
       );
     }
